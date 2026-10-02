@@ -2,8 +2,13 @@
 // s'ouvre même sans réseau (la tournée déjà calculée reste consultable).
 // Stratégie « réseau d'abord » : toujours la dernière version quand il y a du
 // réseau, la copie locale sinon.
+//
+// GitHub Pages autorise le navigateur à garder chaque fichier 10 minutes sans
+// redemander : sans précaution, après une mise à jour, le téléphone peut
+// mélanger la nouvelle page et l'ancien code. On demande donc toujours au
+// serveur si le fichier a changé (réponse très rapide quand il n'a pas changé).
 
-const CACHE = 'ma-tournee-v1';
+const CACHE = 'mes-interventions-v2';
 const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 const APP_FILES = [
   './',
@@ -22,7 +27,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(APP_FILES))
+      .then((cache) => cache.addAll(APP_FILES.map((file) => new Request(file, { cache: 'reload' }))))
       .then(() => self.skipWaiting()),
   );
 });
@@ -39,12 +44,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
-  const isAppFile = url.origin === self.location.origin || url.href.startsWith(LEAFLET);
+  const isOwnFile = url.origin === self.location.origin;
   // adresses, itinéraires et fonds de carte : directement sur le réseau
-  if (request.method !== 'GET' || !isAppFile) return;
+  if (request.method !== 'GET' || !(isOwnFile || url.href.startsWith(LEAFLET))) return;
 
   event.respondWith(
-    fetch(request)
+    // Leaflet a un numéro de version dans son adresse : il ne change jamais
+    fetch(request, isOwnFile ? { cache: 'no-cache' } : {})
       .then((response) => {
         if (response.ok) {
           const copy = response.clone();

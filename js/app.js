@@ -834,6 +834,16 @@ function init() {
   show(shared && start !== 'settings' ? 'input' : start);
 
   if ('serviceWorker' in navigator) {
+    // Quand une nouvelle version de l'appli prend le relais, on recharge une
+    // fois pour l'afficher tout de suite. Rien n'est perdu : tout est déjà
+    // sauvegardé sur le téléphone.
+    const isUpdate = Boolean(navigator.serviceWorker.controller);
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!isUpdate || reloading) return;
+      reloading = true;
+      location.reload();
+    });
     navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker', err));
   }
 }
