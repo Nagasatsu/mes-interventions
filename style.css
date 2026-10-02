@@ -467,6 +467,21 @@ textarea:focus {
   font-weight: 600;
 }
 
+.stop-text .details {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.stop-text .phone {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
 .stop-text .sub {
   margin: 0;
   color: var(--muted);
@@ -486,6 +501,11 @@ textarea:focus {
 .badge.absent {
   background: var(--warn-bg);
   color: var(--warn);
+}
+
+.badge.slot {
+  background: var(--border);
+  color: var(--text);
 }
 
 .badge.added {
@@ -845,4 +865,15 @@ textarea:focus {
 .table-view th:first-child,
 .table-view td:first-child {
   text-align: left;
+}
+
+/* ---------- Photo de la liste ---------- */
+
+#photo {
+  gap: 10px;
+}
+
+.photo-hint {
+  margin-top: -2px;
+  font-size: 13px;
 }

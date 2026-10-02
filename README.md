@@ -3,10 +3,13 @@
 Application pour téléphone (Android) qui remet dans le meilleur ordre les
 interventions de la journée, pour faire le moins de route possible.
 
-1. On colle la liste des interventions (une par ligne).
+1. On prend en photo la « Liste des évènements par agent » (une photo par page) :
+   le téléphone lit la feuille lui-même (Tesseract), sans envoyer la photo.
+   On peut aussi coller une liste, une intervention par ligne.
 2. L'appli trouve chaque adresse et signale celles qui sont douteuses.
 3. Elle calcule l'ordre qui minimise le temps de trajet : départ du travail
-   (ou du domicile), retour au domicile.
+   (ou du domicile), retour au domicile, rendez-vous du matin (« M ») avant
+   ceux de l'après-midi (« AM »).
 4. Elle affiche le parcours sur une carte, avec un bouton Waze / Google Maps
    par intervention, et des boutons « Fait » / « Absent » (client pas là)
    pour suivre l'avancement.
@@ -37,6 +40,8 @@ puis ouvrir http://localhost:8000
 | `js/app.js` | fonctionnement de l'appli (écrans, sauvegarde, carte) |
 | `js/api.js` | recherche d'adresses et temps de trajet (services en ligne) |
 | `js/solver.js` | calcul du meilleur ordre de passage |
+| `js/sheet.js` | lecture de la photo de la feuille (colonnes, lignes, M / AM) |
+| `js/address.js` | règles communes pour nettoyer les adresses (APPT, IND, téléphones…) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | installation sur le téléphone et mode hors-ligne |
 
 ## Services utilisés (gratuits, sans compte)
@@ -46,5 +51,11 @@ puis ouvrir http://localhost:8000
   en voiture. S'il ne répond pas, l'appli estime les temps à vol d'oiseau.
 - **OpenStreetMap** : fond de carte.
 
-Les adresses des interventions sont envoyées à ces services pour le calcul.
-Rien n'est enregistré ailleurs que sur le téléphone.
+La lecture des photos se fait sur le téléphone (l'outil Tesseract et le
+dictionnaire français sont téléchargés depuis jsDelivr la première fois).
+Les adresses des interventions (sans nom ni téléphone) sont envoyées aux
+services ci-dessus pour le calcul. Rien n'est enregistré ailleurs que sur le
+téléphone.
+
+Les photos et listes réelles servant aux essais vont dans `test-data/`, qui
+n'est jamais envoyé sur GitHub.

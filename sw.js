@@ -8,7 +8,7 @@
 // mélanger la nouvelle page et l'ancien code. On demande donc toujours au
 // serveur si le fichier a changé (réponse très rapide quand il n'a pas changé).
 
-const CACHE = 'mes-interventions-v2';
+const CACHE = 'mes-interventions-v3';
 const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 const APP_FILES = [
   './',
@@ -17,6 +17,8 @@ const APP_FILES = [
   './js/app.js',
   './js/api.js',
   './js/solver.js',
+  './js/address.js',
+  './js/sheet.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   `${LEAFLET}leaflet.min.js`,

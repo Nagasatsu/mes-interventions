@@ -66,15 +66,21 @@
         <button class="btn primary big" type="submit">Enregistrer</button>
         <button id="close-settings" class="btn" type="button">Annuler</button>
       </form>
-      <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet, avec ta position GPS quand tu recalcules depuis ta position). Rien n'est enregistré ailleurs que sur ce téléphone.</p>
+      <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet, avec ta position GPS quand tu recalcules depuis ta position). Les photos de la liste sont lues sur le téléphone et ne sont envoyées nulle part ; seules les adresses partent à la recherche. Rien n'est enregistré ailleurs que sur ce téléphone.</p>
     </section>
 
     <!-- Saisie de la liste du jour -->
     <section id="view-input" class="view" hidden>
       <p id="route-summary" class="route-summary"></p>
+      <button id="photo" class="btn primary big" type="button">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        Photographier la liste
+      </button>
+      <input id="photo-input" type="file" accept="image/*" multiple hidden>
+      <p class="hint photo-hint">Une photo par page, feuille bien à plat, toute visible, sans ombre. Les interventions lues s'ajoutent à la liste ci-dessous : vérifie-les, puis trie.</p>
       <label class="field">
         <span>Interventions du jour</span>
-        <textarea id="list" rows="10" placeholder="Une intervention par ligne, par exemple :&#10;12 rue de la Paix 35000 Rennes&#10;4 avenue Janvier, Rennes"></textarea>
+        <textarea id="list" rows="10" placeholder="Prends la feuille en photo, ou écris une intervention par ligne, par exemple :&#10;12 rue de la Paix 62300 Lens&#10;Matin | 4 rue Jean Jaurès Liévin"></textarea>
       </label>
       <p id="list-count" class="hint"></p>
       <button id="optimize" class="btn primary big" type="button">Trier dans le meilleur ordre</button>

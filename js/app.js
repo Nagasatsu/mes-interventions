@@ -1,5 +1,7 @@
 import { geocode, geocodeAll, travelMatrix, routeLine } from './api.js';
 import { optimizeOrder, pathCost } from './solver.js';
+import { STREET_WORD, PHONE, cleanStreet, formatPhone } from './address.js';
+import { readSheetPhoto } from './sheet.js';
 
 const STORE_KEY = 'ma-tournee-v1';
 const LOW_SCORE = 0.45; // en dessous, l'adresse trouvée n'est peut-être pas la bonne
@@ -19,8 +21,21 @@ const words = (text) =>
 // Le service d'adresses renvoie toujours quelque chose, même quand la rue
 // n'existe pas (il prend alors une rue voisine au nom proche). On vérifie donc
 // que les mots importants du nom de rue trouvé étaient bien dans la demande.
+// Type de voie, abréviations comprises : « rue », « avenue », « place »…
+const STREET_TYPES = {
+  rue: 'rue', avenue: 'avenue', av: 'avenue', boulevard: 'boulevard', bd: 'boulevard', place: 'place', pl: 'place',
+  chemin: 'chemin', che: 'chemin', allee: 'allee', impasse: 'impasse', imp: 'impasse', route: 'route', rte: 'route',
+  square: 'square', quai: 'quai', cours: 'cours', residence: 'residence', cite: 'cite', sentier: 'sentier',
+  passage: 'passage', hameau: 'hameau', faubourg: 'faubourg', clos: 'clos', domaine: 'domaine',
+};
+const streetType = (text) => words(text).map((w) => STREET_TYPES[w]).find(Boolean);
+
 function isDoubtful(query, found) {
   if (found.score < LOW_SCORE || found.type === 'municipality') return true;
+  // « rue Jean Jaurès » demandée mais « place Jean Jaurès » trouvée : pas le même endroit
+  const askedType = streetType(query);
+  const foundType = streetType(found.street ?? '');
+  if (askedType && foundType && askedType !== foundType) return true;
   const asked = new Set(words(query).map((w) => ABBREVIATIONS[w] ?? w));
   return words(found.street ?? '').some((w) => !GENERIC_WORDS.has(w) && !/^\d+$/.test(w) && !asked.has(w));
 }
@@ -134,10 +149,10 @@ async function findPlace(query, previous) {
 
 // ---------- Saisie de la liste ----------
 
-// Mots qui signalent une adresse, pour la repérer dans une ligne qui contient
-// d'autres infos (nom du client, numéro d'intervention…).
-const STREET_WORD = /(^|[^\p{L}])(rue|avenue|av|bd|boulevard|chemin|allée|allee|impasse|place|route|rte|quai|cours|square|lotissement|lieu-dit|résidence|residence|chaussée|voie|hameau|faubourg|zac|za|zi|cité|cite|passage|rond-point|esplanade|promenade|clos|domaine)(?![\p{L}])/iu;
 const POSTCODE = /(^|\D)\d{5}(\D|$)/;
+
+// Ligne écrite par la lecture de photo : « Matin | adresse | nom · tél | libellé ».
+const SLOT_FIELD = /^(matin|m|apr[eè]s[- ]?midi|am|\?)$/i;
 
 // Une intervention par ligne.
 function parseList(text) {
@@ -145,7 +160,18 @@ function parseList(text) {
     .split(/\r?\n/)
     .map((raw) => raw.trim())
     .filter((raw) => /[\p{L}\p{N}]/u.test(raw))
-    .map((raw) => ({ raw, query: extractAddress(raw) }));
+    .map(parseLine);
+}
+
+function parseLine(raw) {
+  const firstPhone = (text) => text.match(PHONE)?.[0].replace(/\D/g, '') ?? null;
+  const fields = raw.split(/\s*\|\s*/);
+  if (fields.length >= 2 && SLOT_FIELD.test(fields[0])) {
+    const slot = /^(matin|m)$/i.test(fields[0]) ? 'M' : /^(apr|am)/i.test(fields[0]) ? 'AM' : null;
+    const details = fields.slice(2).filter(Boolean).join(' · ');
+    return { raw, query: cleanStreet(fields[1]), title: fields[1], details, phone: firstPhone(details), slot };
+  }
+  return { raw, query: cleanStreet(extractAddress(raw)), title: raw, details: '', phone: firstPhone(raw), slot: null };
 }
 
 function extractAddress(line) {
@@ -195,6 +221,55 @@ async function pasteFromClipboard() {
   }
 }
 
+// Photos de la feuille : chaque intervention lue devient une ligne de la liste,
+// que Pierre peut vérifier avant de trier. Une intervention déjà présente
+// (même page photographiée deux fois) n'est pas ajoutée une deuxième fois.
+async function importPhotos(files) {
+  if (!files.length) return;
+  let added = 0;
+  let already = 0;
+  let unknownSlot = 0;
+  try {
+    for (const [i, file] of [...files].entries()) {
+      const page = files.length > 1 ? `Photo ${i + 1}/${files.length} · ` : '';
+      busy(`${page}Lecture de la photo…`);
+      const rows = await readSheetPhoto(file, (text) => busy(page + text));
+      for (const row of rows) {
+        const list = $('#list').value;
+        if ((row.ref && list.includes(row.ref)) || list.includes(row.address)) {
+          already++;
+          continue;
+        }
+        $('#list').value = `${list.trim() ? `${list.trimEnd()}\n` : ''}${sheetLine(row)}`;
+        added++;
+        if (!row.slot) unknownSlot++;
+      }
+    }
+    onListInput();
+    if (!added && !already) {
+      toast('Aucune intervention trouvée. Reprends la photo bien à plat, toute la feuille visible, sans ombre.');
+    } else {
+      toast(
+        `${plural(added, 'intervention ajoutée', 'interventions ajoutées')}` +
+          (already ? `, ${already} déjà dans la liste` : '') +
+          (unknownSlot ? `. Matin / après-midi non lu pour ${unknownSlot} : remplace le « ? » en début de ligne.` : '.'),
+      );
+    }
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    idle();
+    $('#photo-input').value = '';
+  }
+}
+
+function sheetLine(row) {
+  const slot = row.slot === 'M' ? 'Matin' : row.slot === 'AM' ? 'Après-midi' : '?';
+  const contact = [row.name, ...row.phones.map(formatPhone)].filter(Boolean).join(' · ');
+  const libelle = [row.num ? `n°${row.num}` : '', row.ref ?? '', row.label].filter(Boolean).join(' ');
+  return [slot, row.address, contact, libelle].join(' | ');
+}
+
 async function optimize() {
   const lines = parseList($('#list').value);
   if (!lines.length) return toast('Colle d’abord la liste des interventions.');
@@ -220,7 +295,8 @@ async function optimize() {
 }
 
 function toStop(id, line, found) {
-  const stop = { id, raw: line.raw, query: line.query, found: Boolean(found) };
+  const { raw, query, title, details, phone, slot } = line;
+  const stop = { id, raw, query, title, details, phone, slot, found: Boolean(found) };
   if (found) {
     Object.assign(stop, { label: found.label, lat: found.lat, lon: found.lon, doubtful: isDoubtful(line.query, found) });
   }
@@ -245,7 +321,8 @@ function renderReview() {
         : `${status === 'warn' ? 'Trouvé, mais pas sûr' : 'Trouvé'} : <b>${esc(stop.label)}</b>`;
       return `
         <li class="card ${status}" data-id="${stop.id}">
-          <p class="raw">${esc(stop.raw)}</p>
+          <p class="raw">${esc(stop.title ?? stop.raw)}</p>
+          ${stop.details ? `<p class="hint">${esc(stop.details)}</p>` : ''}
           <p class="result">${result}</p>
           <input type="text" value="${esc(stop.query)}" aria-label="Adresse à chercher" enterkeyhint="search">
           <div class="row">
@@ -274,7 +351,7 @@ async function onReviewClick(event) {
     busy('Recherche…');
     try {
       const found = await geocode(query, startPlace());
-      state.pending[index] = { ...toStop(stop.id, { raw: stop.raw, query }, found), reviewing: true };
+      state.pending[index] = { ...toStop(stop.id, { ...stop, query }, found), reviewing: true };
       if (!found) toast('Toujours introuvable. Essaie avec le code postal et la ville.');
     } catch (err) {
       toast(err.message);
@@ -299,6 +376,19 @@ async function continueReview() {
 
 // ---------- Calcul de la tournée ----------
 
+// Rendez-vous du matin d'abord : aller d'une intervention de l'après-midi vers
+// une du matin coûte « l'infini », donc le meilleur ordre fait tous les « M »
+// avant les « AM ». Les interventions sans indication vont où c'est le plus court.
+const AFTERNOON_THEN_MORNING = 1e6;
+
+function withSlots(durations, points) {
+  const slots = points.map((point) => point?.slot ?? null);
+  if (!slots.includes('M') || !slots.includes('AM')) return durations;
+  return durations.map((row, i) =>
+    row.map((value, j) => (slots[i] === 'AM' && slots[j] === 'M' ? value + AFTERNOON_THEN_MORNING : value)),
+  );
+}
+
 async function computeTour() {
   const stops = state.pending;
   const n = stops.length;
@@ -311,7 +401,7 @@ async function computeTour() {
   busy('Recherche du meilleur ordre…');
   await new Promise((resolve) => setTimeout(resolve, 30)); // laisse le message s'afficher
   const listOrder = stops.map((_, i) => i + 1);
-  const bestOrder = optimizeOrder(matrix.durations, 0, n + 1, listOrder);
+  const bestOrder = optimizeOrder(withSlots(matrix.durations, [null, ...stops, null]), 0, n + 1, listOrder);
   // gain par rapport à l'ordre de la liste, mesuré avec la même matrice
   const pathOf = (order) => [0, ...order, n + 1];
   const saved = {
@@ -404,8 +494,11 @@ function renderTour() {
             ${isNext ? '<span class="badge">Prochaine</span>' : ''}
             ${status === 'absent' ? '<span class="badge absent">Client absent</span>' : ''}
             ${stop.added ? '<span class="badge added">Ajoutée</span>' : ''}
-            <p class="title">${esc(stop.raw)}</p>
-            ${sameText(stop.raw, stop.label) ? '' : `<p class="sub">${esc(stop.label)}</p>`}
+            ${stop.slot ? `<span class="badge slot">${stop.slot === 'M' ? 'Matin' : 'Après-midi'}</span>` : ''}
+            <p class="title">${esc(stop.title ?? stop.raw)}</p>
+            ${sameText(stop.title ?? stop.raw, stop.label) ? '' : `<p class="sub">${esc(stop.label)}</p>`}
+            ${stop.details ? `<p class="details">${esc(detailsWithoutPhone(stop.details))}</p>` : ''}
+            ${stop.phone ? `<a class="phone" href="tel:${stop.phone}">Appeler le ${formatPhone(stop.phone)}</a>` : ''}
           </div>
         </div>
         <div class="actions">${actions}</div>
@@ -432,6 +525,14 @@ function renderTour() {
 // Statut d'une intervention : 'todo' (à faire), 'done' (faite) ou 'absent' (client absent).
 // Les parcours enregistrés avant l'ajout de « Absent » n'avaient qu'un champ `done`.
 const statusOf = (stop) => stop.status ?? (stop.done ? 'done' : 'todo');
+
+// Nom, libellé… sans le téléphone (affiché à part, en lien « Appeler »).
+const detailsWithoutPhone = (details) =>
+  details
+    .replace(PHONE, '')
+    .replace(/(\s*·\s*){2,}/g, ' · ')
+    .replace(/^\s*·\s*|\s*·\s*$/g, '')
+    .trim();
 
 function onTourClick(event) {
   const button = event.target.closest('button[data-action]');
@@ -513,7 +614,7 @@ async function recalculate(added = []) {
     const matrix = await travelMatrix([from, ...todo, tour.end]);
     busy('Recherche du meilleur ordre…');
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const order = optimizeOrder(matrix.durations, 0, n + 1, todo.map((_, i) => i + 1));
+    const order = optimizeOrder(withSlots(matrix.durations, [null, ...todo, null]), 0, n + 1, todo.map((_, i) => i + 1));
     const ordered = order.map((i) => todo[i - 1]);
 
     busy('Tracé de l’itinéraire…');
@@ -606,7 +707,7 @@ function drawMap(tour, nextId) {
   tour.stops.forEach((stop, k) => {
     const kind = statusOf(stop) !== 'todo' ? 'done' : stop.id === nextId ? 'next' : '';
     L.marker([stop.lat, stop.lon], { icon: pin(k + 1, kind), zIndexOffset: stop.id === nextId ? 1000 : 0 })
-      .bindPopup(`<b>${k + 1}.</b> ${esc(stop.raw)}`)
+      .bindPopup(`<b>${k + 1}.</b> ${esc(stop.title ?? stop.raw)}`)
       .addTo(mapLayer);
   });
   map.invalidateSize();
@@ -942,6 +1043,8 @@ function init() {
 
   $('#list').addEventListener('input', onListInput);
   $('#paste').addEventListener('click', pasteFromClipboard);
+  $('#photo').addEventListener('click', () => $('#photo-input').click());
+  $('#photo-input').addEventListener('change', (event) => importPhotos(event.target.files));
   $('#clear-list').addEventListener('click', () => {
     $('#list').value = '';
     onListInput();
