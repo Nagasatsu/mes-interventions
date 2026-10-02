@@ -55,10 +55,18 @@
           <label class="choice"><input type="radio" name="startFrom" value="home"> au domicile</label>
         </fieldset>
         <p class="hint">Le retour se fait toujours au domicile.</p>
+        <label class="field">
+          <span>Temps moyen passé sur place, par intervention</span>
+          <div class="inline-input">
+            <input id="onsite" type="number" min="0" max="240" step="1" inputmode="numeric">
+            <span>minutes</span>
+          </div>
+          <small class="hint">Sert à estimer l'heure de retour à la maison.</small>
+        </label>
         <button class="btn primary big" type="submit">Enregistrer</button>
         <button id="close-settings" class="btn" type="button">Annuler</button>
       </form>
-      <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet). Rien n'est enregistré ailleurs que sur ce téléphone.</p>
+      <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet, avec ta position GPS quand tu recalcules depuis ta position). Rien n'est enregistré ailleurs que sur ce téléphone.</p>
     </section>
 
     <!-- Saisie de la liste du jour -->
@@ -89,6 +97,21 @@
     <!-- Tournée calculée -->
     <section id="view-tour" class="view" hidden>
       <div id="tour-summary"></div>
+      <div id="tour-progress" class="progress-card"></div>
+      <div class="row tour-tools">
+        <button id="recalc" class="btn" type="button">Recalculer d’ici</button>
+        <button id="show-add" class="btn" type="button">+ Ajouter</button>
+      </div>
+      <form id="add-form" class="card add-form" hidden>
+        <label class="field">
+          <span>Nouvelle intervention</span>
+          <input id="add-address" type="text" placeholder="Adresse, avec la ville" enterkeyhint="done">
+        </label>
+        <div class="row">
+          <button class="btn primary" type="submit">Ajouter et recalculer</button>
+          <button id="cancel-add" class="btn" type="button">Annuler</button>
+        </div>
+      </form>
       <div id="map" class="map"></div>
       <ol id="tour-list" class="stops"></ol>
       <button id="new-tour" class="btn" type="button">Changer la liste</button>

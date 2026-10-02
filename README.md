@@ -10,7 +10,12 @@ interventions de la journée, pour faire le moins de route possible.
 4. Elle affiche le parcours sur une carte, avec un bouton Waze / Google Maps
    par intervention, et des boutons « Fait » / « Absent » (client pas là)
    pour suivre l'avancement.
-5. L'écran Statistiques montre le temps de route gagné par semaine et par
+5. En cours de journée : « Recalculer d'ici » retrie ce qui reste à partir
+   de la position GPS (ou de la dernière intervention faite), et « + Ajouter »
+   insère une intervention urgente puis recalcule.
+6. L'heure de retour à la maison est estimée en continu (route qui reste +
+   temps moyen sur place par intervention, réglable dans les réglages).
+7. L'écran Statistiques montre le temps de route gagné par semaine et par
    mois (un parcours calculé compte pour sa journée).
 
 C'est une « appli web installable » (PWA) : elle s'ouvre dans Chrome et

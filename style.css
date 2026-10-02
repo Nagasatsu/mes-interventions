@@ -121,6 +121,7 @@ p {
 }
 
 input[type="text"],
+input[type="number"],
 textarea {
   width: 100%;
   padding: 12px;
@@ -137,9 +138,20 @@ textarea {
 }
 
 input[type="text"]:focus,
+input[type="number"]:focus,
 textarea:focus {
   outline: 2px solid var(--primary);
   outline-offset: -1px;
+}
+
+.inline-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.inline-input input {
+  width: 96px;
 }
 
 .choice {
@@ -342,8 +354,39 @@ textarea:focus {
   color: var(--warn);
 }
 
-.progress {
-  font-weight: 600;
+.progress-card {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.progress-card .eta {
+  margin-bottom: 2px;
+  font-size: 17px;
+}
+
+.progress-card .eta b {
+  font-size: 22px;
+}
+
+.progress-card .eta span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.progress-card .hint {
+  margin: 0;
+  font-size: 14px;
+}
+
+.tour-tools .btn {
+  font-size: 15px;
+}
+
+.add-form .btn {
+  margin: 0;
 }
 
 .map {
@@ -445,10 +488,11 @@ textarea:focus {
   color: var(--warn);
 }
 
-.absent-count {
-  color: var(--muted);
-  font-weight: 400;
+.badge.added {
+  background: var(--primary-soft);
+  color: var(--primary);
 }
+
 
 .actions {
   display: flex;
@@ -508,6 +552,13 @@ textarea:focus {
 
 .pin.endpoint span {
   background: #111827;
+}
+
+/* point d'où a été fait le dernier recalcul */
+.pin.here span {
+  border-color: #2563eb;
+  background: #fff;
+  color: #2563eb;
 }
 
 /* ---------- Chargement et messages ---------- */

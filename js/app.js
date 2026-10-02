@@ -42,7 +42,7 @@ function loadState() {
     // stockage indisponible : on repart de zéro
   }
   return {
-    settings: { home: null, work: null, startFrom: 'work', ...saved.settings },
+    settings: { home: null, work: null, startFrom: 'work', onsiteMinutes: 10, ...saved.settings },
     draft: saved.draft || '',
     pending: saved.pending || null, // interventions en cours de vérification
     tour: saved.tour || null, // parcours calculé
@@ -92,6 +92,7 @@ function renderSettings() {
   for (const radio of document.querySelectorAll('input[name=startFrom]')) {
     radio.checked = radio.value === startFrom;
   }
+  $('#onsite').value = state.settings.onsiteMinutes;
   $('#close-settings').hidden = homeView() === 'settings';
 }
 
@@ -100,6 +101,7 @@ async function saveSettings(event) {
   const homeQuery = $('#home').value.trim();
   const workQuery = $('#work').value.trim();
   const startFrom = document.querySelector('input[name=startFrom]:checked').value;
+  const onsiteMinutes = Math.min(240, Math.max(0, Math.round(Number($('#onsite').value) || 0)));
   if (startFrom === 'work' && !workQuery) {
     return toast('Indique l’adresse du travail, ou choisis de partir du domicile.');
   }
@@ -111,7 +113,7 @@ async function saveSettings(event) {
     ]);
     if (!home) return toast('Adresse du domicile introuvable. Ajoute le code postal ou la ville.');
     if (workQuery && !work) return toast('Adresse du travail introuvable. Ajoute le code postal ou la ville.');
-    state.settings = { home, work, startFrom };
+    state.settings = { home, work, startFrom, onsiteMinutes };
     saveState();
     show(homeView());
     const doubtful = [['domicile', home], ['travail', work]].find(([, place]) => place?.doubtful);
@@ -369,10 +371,7 @@ async function computeTour() {
 
 function renderTour() {
   const tour = state.tour;
-  const remaining = tour.stops.filter((stop) => statusOf(stop) === 'todo');
-  const absentCount = tour.stops.filter((stop) => statusOf(stop) === 'absent').length;
-  const nextId = remaining[0]?.id;
-  const remainingTime = remaining.reduce((total, stop) => total + stop.leg.duration, 0) + tour.back.duration;
+  const nextId = tour.stops.find((stop) => statusOf(stop) === 'todo')?.id;
   const { saved } = tour;
 
   $('#tour-summary').innerHTML = `
@@ -382,8 +381,8 @@ function renderTour() {
       <div><b>${fmtDistance(tour.total.distance)}</b><span>au total</span></div>
     </div>
     ${saved.duration >= 60 ? `<p class="gain"><b>${fmtDuration(saved.duration)}</b><span>de route en moins par rapport à l'ordre de la liste${saved.distance >= 1000 ? ` (${fmtDistance(saved.distance)} de moins)` : ''}</span></p>` : ''}
-    ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}
-    <p class="progress">${remaining.length ? `Reste ${plural(remaining.length, 'intervention')} · ${fmtDuration(remainingTime)} de route` : 'Toutes les interventions sont terminées, il ne reste que le retour !'}${absentCount ? ` <span class="absent-count">(${plural(absentCount, 'client absent', 'clients absents')})</span>` : ''}</p>`;
+    ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}`;
+  renderProgress();
 
   const stopItem = (stop, k) => {
     const status = statusOf(stop);
@@ -404,6 +403,7 @@ function renderTour() {
           <div class="stop-text">
             ${isNext ? '<span class="badge">Prochaine</span>' : ''}
             ${status === 'absent' ? '<span class="badge absent">Client absent</span>' : ''}
+            ${stop.added ? '<span class="badge added">Ajoutée</span>' : ''}
             <p class="title">${esc(stop.raw)}</p>
             ${sameText(stop.raw, stop.label) ? '' : `<p class="sub">${esc(stop.label)}</p>`}
           </div>
@@ -420,6 +420,7 @@ function renderTour() {
       </div>
     </div>`;
 
+  $('#recalc').hidden = !nextId;
   $('#tour-list').innerHTML = `
     <li class="stop">${endpoint('D', `Départ · ${esc(tour.start.name)}`, tour.start)}</li>
     ${tour.stops.map(stopItem).join('')}
@@ -439,11 +440,138 @@ function onTourClick(event) {
   const stop = state.tour.stops.find((s) => s.id === id);
   delete stop.done;
   stop.status = button.dataset.action;
+  stop.changedAt = stop.status === 'todo' ? undefined : Date.now();
   const entry = state.history.find((e) => e.id === state.tour.createdAt);
   if (entry) entry.absent = state.tour.stops.filter((s) => statusOf(s) === 'absent').length;
   saveState();
   renderTour();
   if (stop.status !== 'todo') $('.stop.next')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ---------- Avancement et heure de retour ----------
+
+// Heure de retour = maintenant + route qui reste + temps sur place pour chaque
+// intervention qui reste, arrondi à 5 minutes (c'est une estimation).
+function returnTime(tour, todo) {
+  const driving = todo.reduce((total, stop) => total + stop.leg.duration, 0) + tour.back.duration;
+  const onsite = todo.length * state.settings.onsiteMinutes * 60;
+  const step = 5 * 60 * 1000;
+  return new Date(Math.round((Date.now() + (driving + onsite) * 1000) / step) * step);
+}
+
+const fmtClock = (date) => `${date.getHours()} h ${String(date.getMinutes()).padStart(2, '0')}`;
+
+function renderProgress() {
+  const tour = state.tour;
+  const todo = tour.stops.filter((stop) => statusOf(stop) === 'todo');
+  const absent = tour.stops.filter((stop) => statusOf(stop) === 'absent').length;
+  const started = todo.length < tour.stops.length || tour.recalculatedAt;
+  const driving = todo.reduce((total, stop) => total + stop.leg.duration, 0) + tour.back.duration;
+  const details = todo.length
+    ? `Reste ${plural(todo.length, 'intervention')} · ${fmtDuration(driving)} de route`
+    : 'Toutes les interventions sont terminées';
+  $('#tour-progress').innerHTML = `
+    <p class="eta">Retour à la maison vers <b>${fmtClock(returnTime(tour, todo))}</b>${started ? '' : ' <span>en partant maintenant</span>'}</p>
+    <p class="hint">${details}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>`;
+}
+
+// ---------- Recalcul en cours de journée ----------
+
+// Position GPS du téléphone, ou null si refusée ou introuvable.
+function currentPosition() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, name: 'Ta position' }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+    );
+  });
+}
+
+// Sans GPS : on repart de la dernière intervention faite, sinon du départ.
+function lastDonePlace(tour) {
+  const last = tour.stops
+    .filter((stop) => statusOf(stop) === 'done' && stop.changedAt)
+    .sort((a, b) => b.changedAt - a.changedAt)[0];
+  return last ? { lat: last.lat, lon: last.lon, name: 'Dernière intervention faite' } : tour.from ?? tour.start;
+}
+
+// Retrie les interventions qui restent (plus d'éventuelles nouvelles) à partir
+// de l'endroit où l'on est. Les interventions terminées gardent leur place.
+async function recalculate(added = []) {
+  const tour = state.tour;
+  busy('Recherche de ta position…');
+  try {
+    const finished = tour.stops.filter((stop) => statusOf(stop) !== 'todo');
+    const todo = [...tour.stops.filter((stop) => statusOf(stop) === 'todo'), ...added];
+    const gps = await currentPosition();
+    const from = gps ?? lastDonePlace(tour);
+    const n = todo.length;
+
+    busy('Calcul des temps de trajet…');
+    const matrix = await travelMatrix([from, ...todo, tour.end]);
+    busy('Recherche du meilleur ordre…');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const order = optimizeOrder(matrix.durations, 0, n + 1, todo.map((_, i) => i + 1));
+    const ordered = order.map((i) => todo[i - 1]);
+
+    busy('Tracé de l’itinéraire…');
+    const route = matrix.source === 'osrm' ? await routeLine([from, ...ordered, tour.end]) : null;
+    const path = [0, ...order, n + 1];
+    const legs =
+      route?.legs ??
+      path.slice(1).map((to, k) => ({
+        duration: matrix.durations[path[k]][to],
+        distance: matrix.distances[path[k]][to],
+      }));
+    legs[0] = { ...legs[0], from: gps ? 'position' : 'last' };
+
+    tour.stops = [...finished, ...ordered.map((stop, k) => ({ ...stop, leg: legs[k] }))];
+    tour.back = legs[n];
+    const allLegs = [...tour.stops.map((stop) => stop.leg), tour.back];
+    tour.total = {
+      duration: allLegs.reduce((sum, leg) => sum + leg.duration, 0),
+      distance: allLegs.reduce((sum, leg) => sum + leg.distance, 0),
+    };
+    tour.from = from;
+    tour.line = route?.line ?? null;
+    tour.estimated = matrix.source !== 'osrm';
+    tour.recalculatedAt = Date.now();
+    const entry = state.history.find((e) => e.id === tour.createdAt);
+    if (entry) entry.stops = tour.stops.length;
+    saveState();
+    renderTour();
+    $('.stop.next')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!gps) toast('Position GPS introuvable : recalcul depuis la dernière intervention faite.');
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    idle();
+  }
+}
+
+async function addStop(event) {
+  event.preventDefault();
+  const raw = $('#add-address').value.trim();
+  if (!raw) return toast('Indique l’adresse de la nouvelle intervention.');
+  const query = parseList(raw)[0]?.query ?? raw;
+  busy('Recherche de l’adresse…');
+  let found;
+  try {
+    found = await geocode(query, startPlace());
+  } catch (err) {
+    return toast(err.message);
+  } finally {
+    idle();
+  }
+  if (!found) return toast('Adresse introuvable. Ajoute le code postal ou la ville.');
+  if (isDoubtful(query, found) && !confirm(`Adresse trouvée : « ${found.label} ». C'est bien ça ?`)) return;
+  const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
+  const stop = { id, raw, query, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
+  $('#add-form').hidden = true;
+  $('#add-address').value = '';
+  await recalculate([stop]);
 }
 
 function drawMap(tour, nextId) {
@@ -463,12 +591,18 @@ function drawMap(tour, nextId) {
   mapLayer.clearLayers();
   const pin = (text, kind) =>
     L.divIcon({ className: `pin ${kind}`, html: `<span>${text}</span>`, iconSize: [28, 28], iconAnchor: [14, 14] });
-  const line = tour.line ?? [tour.start, ...tour.stops, tour.end].map((p) => [p.lat, p.lon]);
+  const straight = tour.from
+    ? [tour.from, ...tour.stops.filter((stop) => statusOf(stop) === 'todo'), tour.end]
+    : [tour.start, ...tour.stops, tour.end];
+  const line = tour.line ?? straight.map((p) => [p.lat, p.lon]);
   L.polyline(line, { color: '#2563eb', weight: 4, opacity: 0.75 }).addTo(mapLayer);
   L.marker([tour.end.lat, tour.end.lon], { icon: pin('R', 'endpoint') }).bindPopup('Retour · Domicile').addTo(mapLayer);
   L.marker([tour.start.lat, tour.start.lon], { icon: pin('D', 'endpoint') })
     .bindPopup(`Départ · ${esc(tour.start.name)}`)
     .addTo(mapLayer);
+  if (tour.from) {
+    L.marker([tour.from.lat, tour.from.lon], { icon: pin('●', 'here') }).bindPopup(esc(tour.from.name)).addTo(mapLayer);
+  }
   tour.stops.forEach((stop, k) => {
     const kind = statusOf(stop) !== 'todo' ? 'done' : stop.id === nextId ? 'next' : '';
     L.marker([stop.lat, stop.lon], { icon: pin(k + 1, kind), zIndexOffset: stop.id === nextId ? 1000 : 0 })
@@ -476,9 +610,10 @@ function drawMap(tour, nextId) {
       .addTo(mapLayer);
   });
   map.invalidateSize();
-  if (mapFittedFor !== tour.createdAt) {
+  const fitKey = `${tour.createdAt}/${tour.recalculatedAt ?? 0}`;
+  if (mapFittedFor !== fitKey) {
     map.fitBounds(L.latLngBounds(line), { padding: [36, 36] });
-    mapFittedFor = tour.createdAt;
+    mapFittedFor = fitKey;
   }
 }
 
@@ -487,7 +622,9 @@ function drawMap(tour, nextId) {
 const wazeUrl = (p) => `https://waze.com/ul?ll=${p.lat},${p.lon}&navigate=yes`;
 const mapsUrl = (p) => `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}&travelmode=driving`;
 
-const legLine = (leg) => `<div class="leg">${fmtDuration(leg.duration)} · ${fmtDistance(leg.distance)}</div>`;
+const LEG_ORIGIN = { position: ' depuis ta position', last: ' depuis la dernière intervention faite' };
+const legLine = (leg) =>
+  `<div class="leg">${fmtDuration(leg.duration)} · ${fmtDistance(leg.distance)}${LEG_ORIGIN[leg.from] ?? ''}</div>`;
 
 function fmtDuration(seconds) {
   const minutes = Math.round(seconds / 60);
@@ -827,6 +964,21 @@ function init() {
   });
 
   $('#tour-list').addEventListener('click', onTourClick);
+  $('#recalc').addEventListener('click', () => recalculate());
+  $('#show-add').addEventListener('click', () => {
+    $('#add-form').hidden = false;
+    $('#add-address').focus();
+  });
+  $('#cancel-add').addEventListener('click', () => {
+    $('#add-form').hidden = true;
+  });
+  $('#add-form').addEventListener('submit', addStop);
+  // l'heure de retour avance avec l'horloge, et se met à jour au retour de Waze / Maps
+  const refreshProgress = () => {
+    if (state.tour && !$('#view-tour').hidden && document.visibilityState === 'visible') renderProgress();
+  };
+  setInterval(refreshProgress, 60000);
+  document.addEventListener('visibilitychange', refreshProgress);
   $('#new-tour').addEventListener('click', () => show('input'));
 
   const shared = receiveSharedText();
