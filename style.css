@@ -551,8 +551,35 @@ textarea:focus {
 }
 
 /* trait entre deux étapes, avec le temps de trajet */
-.lunch-where {
-  margin: 12px 0 0;
+/* interrupteur « Pause déjeuner à l'agence : Non | Oui » */
+.agency-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.agency-toggle small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.agency-toggle .segmented {
+  flex: none;
+  width: 132px;
+  margin: 0;
+}
+
+.agency-toggle .segmented button {
+  min-height: 36px;
 }
 
 /* étape « Pause déjeuner à l'agence » */

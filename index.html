@@ -69,9 +69,6 @@
             <label class="small-label">Début<input id="lunch-start" type="time"></label>
             <label class="small-label">Durée (minutes)<input id="lunch-minutes" type="number" min="0" max="240" step="5" inputmode="numeric"></label>
           </div>
-          <p class="small-label lunch-where">Pendant la pause</p>
-          <label class="choice"><input type="radio" name="lunchAtAgency" value="no"> je reste dans le secteur</label>
-          <label class="choice"><input type="radio" name="lunchAtAgency" value="yes"> je retourne à l'agence</label>
           <small class="hint">Les rendez-vous de l'après-midi commencent après la pause. 0 minute = pas de pause.</small>
         </fieldset>
         <button class="btn primary big" type="submit">Enregistrer</button>
@@ -94,6 +91,13 @@
         <textarea id="list" rows="10" placeholder="Prends la feuille en photo, ou écris une intervention par ligne, par exemple :&#10;12 rue de la Paix 62300 Lens&#10;Matin | 4 rue Jean Jaurès Liévin"></textarea>
       </label>
       <p id="list-count" class="hint"></p>
+      <div class="agency-toggle">
+        <span>Pause déjeuner à l'agence<small class="agency-note"></small></span>
+        <div class="segmented" role="group" aria-label="Pause déjeuner à l'agence">
+          <button type="button" data-agency="no">Non</button>
+          <button type="button" data-agency="yes">Oui</button>
+        </div>
+      </div>
       <button id="optimize" class="btn primary big" type="button">Trier dans le meilleur ordre</button>
       <div class="row">
         <button id="paste" class="btn" type="button">Coller</button>
@@ -115,6 +119,13 @@
     <section id="view-tour" class="view" hidden>
       <div id="tour-summary"></div>
       <div id="tour-progress" class="progress-card"></div>
+      <div class="agency-toggle">
+        <span>Pause déjeuner à l'agence<small class="agency-note"></small></span>
+        <div class="segmented" role="group" aria-label="Pause déjeuner à l'agence">
+          <button type="button" data-agency="no">Non</button>
+          <button type="button" data-agency="yes">Oui</button>
+        </div>
+      </div>
       <div class="row tour-tools">
         <button id="recalc" class="btn" type="button">Recalculer d’ici</button>
         <button id="show-add" class="btn" type="button">+ Ajouter</button>

@@ -110,10 +110,16 @@ function coordList(points) {
 // fetch + JSON, avec délai maximum et nouvel essai si le service est surchargé.
 async function fetchJson(url, attempts = 3) {
   for (let attempt = 1; ; attempt++) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    let res;
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    } catch {
+      // pas de réseau, ou service qui ne répond pas dans les 15 secondes
+      throw new Error('Le service en ligne ne répond pas. Vérifie la connexion internet et réessaie.');
+    }
     if (res.ok) return res.json();
     if (attempt >= attempts || (res.status !== 429 && res.status < 500)) {
-      throw new Error(`HTTP ${res.status}`);
+      throw new Error(`Le service en ligne a renvoyé une erreur (${res.status}). Réessaie dans un moment.`);
     }
     await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
   }

@@ -119,9 +119,6 @@ function renderSettings() {
   $('#onsite').value = state.settings.onsiteMinutes;
   $('#lunch-start').value = state.settings.lunchStart;
   $('#lunch-minutes').value = state.settings.lunchMinutes;
-  for (const radio of document.querySelectorAll('input[name=lunchAtAgency]')) {
-    radio.checked = radio.value === (state.settings.lunchAtAgency ? 'yes' : 'no');
-  }
   $('#close-settings').hidden = homeView() === 'settings';
 }
 
@@ -134,11 +131,6 @@ async function saveSettings(event) {
   const onsiteMinutes = minutes($('#onsite'));
   const lunchStart = /^\d{2}:\d{2}$/.test($('#lunch-start').value) ? $('#lunch-start').value : '12:00';
   const lunchMinutes = minutes($('#lunch-minutes'));
-  const lunchAtAgency = document.querySelector('input[name=lunchAtAgency]:checked')?.value === 'yes';
-  if (lunchAtAgency && !workQuery) {
-    return toast('Indique l’adresse de l’agence (travail) pour y retourner à midi.');
-  }
-  const lunchChanged = lunchAtAgency !== state.settings.lunchAtAgency;
   if (startFrom === 'work' && !workQuery) {
     return toast('Indique l’adresse du travail, ou choisis de partir du domicile.');
   }
@@ -150,12 +142,12 @@ async function saveSettings(event) {
     ]);
     if (!home) return toast('Adresse du domicile introuvable. Ajoute le code postal ou la ville.');
     if (workQuery && !work) return toast('Adresse du travail introuvable. Ajoute le code postal ou la ville.');
+    const { lunchAtAgency } = state.settings;
     state.settings = { home, work, startFrom, onsiteMinutes, lunchStart, lunchMinutes, lunchAtAgency };
     saveState();
     show(homeView());
     const doubtful = [['domicile', home], ['travail', work]].find(([, place]) => place?.doubtful);
     if (doubtful) toast(`Adresse du ${doubtful[0]} pas sûre : « ${doubtful[1].label} ». Corrige-la dans les réglages si besoin.`);
-    else if (lunchChanged && state.tour) toast('Pour mettre à jour le parcours en cours, appuie sur « Recalculer d’ici ».');
   } catch (err) {
     toast(err.message);
   } finally {
@@ -212,6 +204,35 @@ function extractAddress(line) {
   return cleaned;
 }
 
+// ---------- Interrupteur « Pause déjeuner à l'agence » ----------
+
+function renderAgencyToggle() {
+  const { lunchAtAgency, lunchMinutes } = state.settings;
+  const passed = Date.now() >= lunchWindow().to;
+  for (const toggle of document.querySelectorAll('.agency-toggle')) {
+    toggle.hidden = lunchMinutes <= 0;
+    toggle.querySelector('.agency-note').textContent = passed ? 'pause de midi déjà passée' : '';
+    for (const button of toggle.querySelectorAll('[data-agency]')) {
+      button.setAttribute('aria-pressed', String((button.dataset.agency === 'yes') === lunchAtAgency));
+    }
+  }
+}
+
+// Sur le parcours, le changement est appliqué tout de suite : depuis le départ
+// si la journée n'a pas commencé, sinon depuis là où l'on est.
+async function setLunchAtAgency(value) {
+  if (value === state.settings.lunchAtAgency) return;
+  if (value && !state.settings.work) return toast('Indique d’abord l’adresse de l’agence (travail) dans les réglages.');
+  state.settings.lunchAtAgency = value;
+  saveState();
+  renderAgencyToggle();
+  const tour = state.tour;
+  if (!tour || $('#view-tour').hidden) return;
+  if (Date.now() >= lunchWindow().to) return toast('La pause de midi est déjà passée aujourd’hui : le parcours ne change pas.');
+  const notStarted = tour.stops.every((stop) => statusOf(stop) === 'todo') && !tour.recalculatedAt;
+  await recalculate([], { fromStart: notStarted });
+}
+
 function renderInput() {
   const { home } = state.settings;
   const start = startPlace();
@@ -219,6 +240,7 @@ function renderInput() {
   $('#route-summary').innerHTML = `Départ ${esc(startText)}<br>Retour au domicile (${esc(home.label)})`;
   $('#list').value = state.draft;
   updateCount();
+  renderAgencyToggle();
   $('#back-to-tour').hidden = !state.tour;
 }
 
@@ -622,6 +644,7 @@ function renderTour() {
     <li class="stop">${legLine(tour.back)}${endpoint('R', 'Retour · Domicile', tour.end)}</li>`;
 
   renderProgress();
+  renderAgencyToggle();
   drawMap(tour, nextId);
 }
 
@@ -750,16 +773,16 @@ function lastDonePlace(tour) {
 
 // Retrie les interventions qui restent (plus d'éventuelles nouvelles) à partir
 // de l'endroit où l'on est. Les interventions terminées gardent leur place.
-async function recalculate(added = []) {
+async function recalculate(added = [], { fromStart = false } = {}) {
   const tour = state.tour;
-  busy('Recherche de ta position…');
+  busy(fromStart ? 'Calcul du parcours…' : 'Recherche de ta position…');
   try {
     const finished = tour.stops.filter((stop) => statusOf(stop) !== 'todo');
     // la pause à l'agence suit le réglage actuel : ajoutée, ou retirée si on n'y va plus
     const todo = [...tour.stops.filter((stop) => statusOf(stop) === 'todo' && !isLunch(stop)), ...added];
     if (!finished.some(isLunch) && lunchAtAgencyToday()) todo.push(lunchStop());
-    const gps = await currentPosition();
-    const from = gps ?? lastDonePlace(tour);
+    const gps = fromStart ? null : await currentPosition();
+    const from = fromStart ? tour.start : gps ?? lastDonePlace(tour);
     const n = todo.length;
 
     busy('Calcul des temps de trajet…');
@@ -778,7 +801,7 @@ async function recalculate(added = []) {
         duration: matrix.durations[path[k]][to],
         distance: matrix.distances[path[k]][to],
       }));
-    legs[0] = { ...legs[0], from: gps ? 'position' : 'last' };
+    if (!fromStart) legs[0] = { ...legs[0], from: gps ? 'position' : 'last' };
 
     tour.stops = [...finished, ...ordered.map((stop, k) => ({ ...stop, leg: legs[k] }))];
     tour.back = legs[n];
@@ -787,16 +810,17 @@ async function recalculate(added = []) {
       duration: allLegs.reduce((sum, leg) => sum + leg.duration, 0),
       distance: allLegs.reduce((sum, leg) => sum + leg.distance, 0),
     };
-    tour.from = from;
+    tour.from = fromStart ? undefined : from;
     tour.line = route?.line ?? null;
     tour.estimated = matrix.source !== 'osrm';
-    tour.recalculatedAt = Date.now();
+    tour.version = (tour.version ?? 0) + 1; // pour recadrer la carte
+    if (!fromStart) tour.recalculatedAt = Date.now();
     const entry = state.history.find((e) => e.id === tour.createdAt);
     if (entry) entry.stops = tour.stops.filter((stop) => !isLunch(stop)).length;
     saveState();
     renderTour();
     $('.stop.next')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    if (!gps) toast('Position GPS introuvable : recalcul depuis la dernière intervention faite.');
+    if (!fromStart && !gps) toast('Position GPS introuvable : recalcul depuis la dernière intervention faite.');
   } catch (err) {
     toast(err.message);
   } finally {
@@ -865,7 +889,7 @@ function drawMap(tour, nextId) {
       .addTo(mapLayer);
   }
   map.invalidateSize();
-  const fitKey = `${tour.createdAt}/${tour.recalculatedAt ?? 0}`;
+  const fitKey = `${tour.createdAt}/${tour.version ?? 0}`;
   if (mapFittedFor !== fitKey) {
     map.fitBounds(L.latLngBounds(line), { padding: [36, 36] });
     mapFittedFor = fitKey;
@@ -1221,6 +1245,9 @@ function init() {
   });
 
   $('#tour-list').addEventListener('click', onTourClick);
+  for (const button of document.querySelectorAll('[data-agency]')) {
+    button.addEventListener('click', () => setLunchAtAgency(button.dataset.agency === 'yes'));
+  }
   $('#recalc').addEventListener('click', () => recalculate());
   $('#show-add').addEventListener('click', () => {
     $('#add-form').hidden = false;
