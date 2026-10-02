@@ -234,6 +234,11 @@ textarea:focus {
   color: var(--primary);
 }
 
+.btn.link.danger {
+  color: var(--bad);
+  font-weight: 400;
+}
+
 .row {
   display: flex;
   gap: 10px;

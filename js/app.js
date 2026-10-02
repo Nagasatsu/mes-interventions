@@ -592,6 +592,7 @@ function renderStats() {
   }
   $('#stats-label').textContent = label;
   $('#stats-next').disabled = statsView.offset >= 0;
+  $('#reset-stats').hidden = !state.history.length;
 
   const keys = new Set(days.map((day) => day.key));
   const entries = state.history.filter((entry) => keys.has(entry.day));
@@ -774,6 +775,12 @@ function init() {
     show('stats');
   });
   $('#close-stats').addEventListener('click', () => show(homeView()));
+  $('#reset-stats').addEventListener('click', () => {
+    if (!confirm('Effacer toutes les statistiques ? Elles ne pourront pas être récupérées.')) return;
+    state.history = [];
+    saveState();
+    renderStats();
+  });
   for (const button of document.querySelectorAll('[data-period]')) {
     button.addEventListener('click', () => {
       statsView.period = button.dataset.period;
