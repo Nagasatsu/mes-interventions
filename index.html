@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d4ed8">
+  <meta name="description" content="Trie les interventions de la journée pour faire le moins de route possible.">
+  <title>Mes interventions</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // Thème choisi avec le bouton, sinon celui du téléphone.
+    // Appliqué ici, avant l'affichage, pour éviter un éclair blanc.
+    let savedTheme = null;
+    try { savedTheme = localStorage.getItem('ma-tournee-theme'); } catch {}
+    document.documentElement.dataset.theme =
+      savedTheme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Mes interventions</h1>
+    <div class="topbar-actions">
+      <button id="toggle-theme" class="icon-btn" type="button"></button>
+      <button id="open-settings" class="icon-btn" type="button" aria-label="Réglages">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Réglages : domicile, travail, point de départ -->
+    <section id="view-settings" class="view" hidden>
+      <h2>Réglages</h2>
+      <form id="settings-form">
+        <label class="field">
+          <span>Adresse du domicile</span>
+          <input id="home" type="text" placeholder="12 rue des Lilas 35000 Rennes" required>
+          <small id="home-found" class="found"></small>
+        </label>
+        <label class="field">
+          <span>Adresse du travail</span>
+          <input id="work" type="text" placeholder="Adresse de l'entreprise ou du dépôt">
+          <small id="work-found" class="found"></small>
+        </label>
+        <fieldset class="field">
+          <legend>La journée commence…</legend>
+          <label class="choice"><input type="radio" name="startFrom" value="work"> au travail</label>
+          <label class="choice"><input type="radio" name="startFrom" value="home"> au domicile</label>
+        </fieldset>
+        <p class="hint">Le retour se fait toujours au domicile.</p>
+        <button class="btn primary big" type="submit">Enregistrer</button>
+        <button id="close-settings" class="btn" type="button">Annuler</button>
+      </form>
+      <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet). Rien n'est enregistré ailleurs que sur ce téléphone.</p>
+    </section>
+
+    <!-- Saisie de la liste du jour -->
+    <section id="view-input" class="view" hidden>
+      <p id="route-summary" class="route-summary"></p>
+      <label class="field">
+        <span>Interventions du jour</span>
+        <textarea id="list" rows="10" placeholder="Une intervention par ligne, par exemple :&#10;12 rue de la Paix 35000 Rennes&#10;4 avenue Janvier, Rennes"></textarea>
+      </label>
+      <p id="list-count" class="hint"></p>
+      <button id="optimize" class="btn primary big" type="button">Trier dans le meilleur ordre</button>
+      <div class="row">
+        <button id="paste" class="btn" type="button">Coller</button>
+        <button id="clear-list" class="btn" type="button">Effacer</button>
+      </div>
+      <button id="back-to-tour" class="btn link" type="button">Revenir au parcours en cours</button>
+    </section>
+
+    <!-- Vérification des adresses douteuses -->
+    <section id="view-review" class="view" hidden>
+      <h2>Adresses à vérifier</h2>
+      <p id="review-intro" class="hint"></p>
+      <ul id="review-list" class="cards"></ul>
+      <button id="review-continue" class="btn primary big" type="button">Continuer</button>
+      <button id="review-cancel" class="btn" type="button">Retour à la liste</button>
+    </section>
+
+    <!-- Tournée calculée -->
+    <section id="view-tour" class="view" hidden>
+      <div id="tour-summary"></div>
+      <div id="map" class="map"></div>
+      <ol id="tour-list" class="stops"></ol>
+      <button id="new-tour" class="btn" type="button">Changer la liste</button>
+    </section>
+  </main>
+
+  <div id="busy" class="busy" hidden>
+    <div class="spinner"></div>
+    <p id="busy-text"></p>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin="anonymous"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
