@@ -45,7 +45,7 @@
           <small id="home-found" class="found"></small>
         </label>
         <label class="field">
-          <span>Adresse du travail</span>
+          <span>Adresse du travail (agence)</span>
           <input id="work" type="text" placeholder="Adresse de l'entreprise ou du dépôt">
           <small id="work-found" class="found"></small>
         </label>
@@ -69,6 +69,9 @@
             <label class="small-label">Début<input id="lunch-start" type="time"></label>
             <label class="small-label">Durée (minutes)<input id="lunch-minutes" type="number" min="0" max="240" step="5" inputmode="numeric"></label>
           </div>
+          <p class="small-label lunch-where">Pendant la pause</p>
+          <label class="choice"><input type="radio" name="lunchAtAgency" value="no"> je reste dans le secteur</label>
+          <label class="choice"><input type="radio" name="lunchAtAgency" value="yes"> je retourne à l'agence</label>
           <small class="hint">Les rendez-vous de l'après-midi commencent après la pause. 0 minute = pas de pause.</small>
         </fieldset>
         <button class="btn primary big" type="submit">Enregistrer</button>

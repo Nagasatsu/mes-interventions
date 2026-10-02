@@ -64,6 +64,7 @@ function loadState() {
       onsiteMinutes: 10,
       lunchStart: '12:00',
       lunchMinutes: 90,
+      lunchAtAgency: false,
       ...saved.settings,
     },
     draft: saved.draft || '',
@@ -118,6 +119,9 @@ function renderSettings() {
   $('#onsite').value = state.settings.onsiteMinutes;
   $('#lunch-start').value = state.settings.lunchStart;
   $('#lunch-minutes').value = state.settings.lunchMinutes;
+  for (const radio of document.querySelectorAll('input[name=lunchAtAgency]')) {
+    radio.checked = radio.value === (state.settings.lunchAtAgency ? 'yes' : 'no');
+  }
   $('#close-settings').hidden = homeView() === 'settings';
 }
 
@@ -130,6 +134,11 @@ async function saveSettings(event) {
   const onsiteMinutes = minutes($('#onsite'));
   const lunchStart = /^\d{2}:\d{2}$/.test($('#lunch-start').value) ? $('#lunch-start').value : '12:00';
   const lunchMinutes = minutes($('#lunch-minutes'));
+  const lunchAtAgency = document.querySelector('input[name=lunchAtAgency]:checked')?.value === 'yes';
+  if (lunchAtAgency && !workQuery) {
+    return toast('Indique l’adresse de l’agence (travail) pour y retourner à midi.');
+  }
+  const lunchChanged = lunchAtAgency !== state.settings.lunchAtAgency;
   if (startFrom === 'work' && !workQuery) {
     return toast('Indique l’adresse du travail, ou choisis de partir du domicile.');
   }
@@ -141,11 +150,12 @@ async function saveSettings(event) {
     ]);
     if (!home) return toast('Adresse du domicile introuvable. Ajoute le code postal ou la ville.');
     if (workQuery && !work) return toast('Adresse du travail introuvable. Ajoute le code postal ou la ville.');
-    state.settings = { home, work, startFrom, onsiteMinutes, lunchStart, lunchMinutes };
+    state.settings = { home, work, startFrom, onsiteMinutes, lunchStart, lunchMinutes, lunchAtAgency };
     saveState();
     show(homeView());
     const doubtful = [['domicile', home], ['travail', work]].find(([, place]) => place?.doubtful);
     if (doubtful) toast(`Adresse du ${doubtful[0]} pas sûre : « ${doubtful[1].label} ». Corrige-la dans les réglages si besoin.`);
+    else if (lunchChanged && state.tour) toast('Pour mettre à jour le parcours en cours, appuie sur « Recalculer d’ici ».');
   } catch (err) {
     toast(err.message);
   } finally {
@@ -389,21 +399,71 @@ async function continueReview() {
 
 // ---------- Calcul de la tournée ----------
 
-// Rendez-vous du matin d'abord : aller d'une intervention de l'après-midi vers
-// une du matin coûte « l'infini », donc le meilleur ordre fait tous les « M »
-// avant les « AM ». Les interventions sans indication vont où c'est le plus court.
-const AFTERNOON_THEN_MORNING = 1e6;
+// Ordre de la journée : matin, pause (à l'agence si Pierre y retourne), après-midi.
+// Chaque étape a un rang : 0 = matin, 1 = pause à l'agence, 2 = après-midi.
+// Revenir à un rang plus petit coûte « l'infini » : le meilleur ordre respecte
+// donc toujours la journée.
+const RANK = { M: 0, AM: 2 };
+const BACKWARDS = 1e6;
+const LUNCH_ID = -1;
 
-function withSlots(durations, points) {
-  const slots = points.map((point) => point?.slot ?? null);
-  if (!slots.includes('M') || !slots.includes('AM')) return durations;
+const isLunch = (stop) => stop.kind === 'lunch';
+
+function lunchWindow(now = Date.now()) {
+  const [hours, minutes] = state.settings.lunchStart.split(':').map(Number);
+  const from = new Date(now).setHours(hours, minutes, 0, 0);
+  return { from, to: from + state.settings.lunchMinutes * 60 * 1000 };
+}
+
+// Passage à l'agence pour la pause : si le réglage le demande et que la pause n'est pas passée.
+function lunchAtAgencyToday() {
+  const { lunchAtAgency, lunchMinutes, work } = state.settings;
+  return Boolean(lunchAtAgency && lunchMinutes > 0 && work && Date.now() < lunchWindow().to);
+}
+
+function lunchStop() {
+  const { work } = state.settings;
+  const title = 'Pause déjeuner à l’agence';
+  return { id: LUNCH_ID, kind: 'lunch', raw: title, title, label: work.label, lat: work.lat, lon: work.lon, found: true };
+}
+
+// Meilleur ordre de passage pour `stops` (la pause à l'agence peut en faire
+// partie), entre le point 0 et le point n+1 de la matrice des temps.
+function bestOrder(durations, stops) {
+  const n = stops.length;
+  const all = stops.map((_, i) => i + 1);
+  const slots = stops.map((stop) => stop.slot);
+  if (!stops.some(isLunch) && !(slots.includes('M') && slots.includes('AM'))) {
+    return optimizeOrder(durations, 0, n + 1, all);
+  }
+  // Interventions sans « M » / « AM » : le matin si on y arriverait avant la
+  // pause, l'après-midi sinon (d'après un premier ordre, sans la pause).
+  const real = all.filter((i) => !isLunch(stops[i - 1]));
+  const draft = optimizeOrder(penalize(durations, [0, ...stops.map((s) => RANK[s.slot] ?? null), 2]), 0, n + 1, real, 150);
+  const lunchFrom = lunchWindow().from;
+  const onsite = state.settings.onsiteMinutes * 60 * 1000;
+  const arrival = new Map();
+  let time = Date.now();
+  let previous = 0;
+  for (const i of draft) {
+    time += durations[previous][i] * 1000;
+    arrival.set(i, time);
+    time += onsite;
+    previous = i;
+  }
+  const ranks = stops.map((stop, k) => (isLunch(stop) ? 1 : RANK[stop.slot] ?? (arrival.get(k + 1) < lunchFrom ? 0 : 2)));
+  return optimizeOrder(penalize(durations, [0, ...ranks, 2]), 0, n + 1, all);
+}
+
+function penalize(durations, ranks) {
   return durations.map((row, i) =>
-    row.map((value, j) => (slots[i] === 'AM' && slots[j] === 'M' ? value + AFTERNOON_THEN_MORNING : value)),
+    row.map((value, j) => (ranks[i] !== null && ranks[j] !== null && ranks[i] > ranks[j] ? value + BACKWARDS : value)),
   );
 }
 
 async function computeTour() {
-  const stops = state.pending;
+  const real = state.pending;
+  const stops = lunchAtAgencyToday() ? [...real, lunchStop()] : real;
   const n = stops.length;
   const start = startPlace();
   const end = { ...state.settings.home, name: 'Domicile' };
@@ -413,19 +473,21 @@ async function computeTour() {
 
   busy('Recherche du meilleur ordre…');
   await new Promise((resolve) => setTimeout(resolve, 30)); // laisse le message s'afficher
-  const listOrder = stops.map((_, i) => i + 1);
-  const bestOrder = optimizeOrder(withSlots(matrix.durations, [null, ...stops, null]), 0, n + 1, listOrder);
+  const listOrder = real.map((_, i) => i + 1);
+  const best = bestOrder(matrix.durations, stops);
   // gain par rapport à l'ordre de la liste, mesuré avec la même matrice
+  // (sans le passage à l'agence, que la liste ne prévoit pas)
   const pathOf = (order) => [0, ...order, n + 1];
+  const bestWithoutLunch = best.filter((i) => !isLunch(stops[i - 1]));
   const saved = {
-    duration: pathCost(matrix.durations, pathOf(listOrder)) - pathCost(matrix.durations, pathOf(bestOrder)),
-    distance: pathCost(matrix.distances, pathOf(listOrder)) - pathCost(matrix.distances, pathOf(bestOrder)),
+    duration: pathCost(matrix.durations, pathOf(listOrder)) - pathCost(matrix.durations, pathOf(bestWithoutLunch)),
+    distance: pathCost(matrix.distances, pathOf(listOrder)) - pathCost(matrix.distances, pathOf(bestWithoutLunch)),
   };
 
   busy('Tracé de l’itinéraire…');
-  const ordered = bestOrder.map((i) => stops[i - 1]);
+  const ordered = best.map((i) => stops[i - 1]);
   const route = matrix.source === 'osrm' ? await routeLine([start, ...ordered, end]) : null;
-  const path = pathOf(bestOrder);
+  const path = pathOf(best);
   const legs =
     route?.legs ??
     path.slice(1).map((to, k) => ({
@@ -444,7 +506,7 @@ async function computeTour() {
   state.history.push({
     id: createdAt,
     day: today,
-    stops: n,
+    stops: real.length,
     absent: 0,
     savedTime: Math.max(0, saved.duration),
     savedDistance: Math.max(0, saved.distance),
@@ -479,14 +541,42 @@ function renderTour() {
 
   $('#tour-summary').innerHTML = `
     <div class="stats">
-      <div><b>${tour.stops.length}</b><span>interventions</span></div>
+      <div><b>${tour.stops.filter((stop) => !isLunch(stop)).length}</b><span>interventions</span></div>
       <div><b>${fmtDuration(tour.total.duration)}</b><span>de route</span></div>
       <div><b>${fmtDistance(tour.total.distance)}</b><span>au total</span></div>
     </div>
     ${saved.duration >= 60 ? `<p class="gain"><b>${fmtDuration(saved.duration)}</b><span>de route en moins par rapport à l'ordre de la liste${saved.distance >= 1000 ? ` (${fmtDistance(saved.distance)} de moins)` : ''}</span></p>` : ''}
     ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}`;
 
-  const stopItem = (stop, k) => {
+  let number = 0;
+  const stopItem = (stop) => (isLunch(stop) ? lunchItem(stop) : interventionItem(stop, ++number));
+  const lunchItem = (stop) => {
+    const status = statusOf(stop);
+    const isNext = stop.id === nextId;
+    const actions =
+      status === 'todo'
+        ? `<a class="btn" href="${wazeUrl(stop)}" target="_blank" rel="noopener">Waze</a>
+           <a class="btn" href="${mapsUrl(stop)}" target="_blank" rel="noopener">Maps</a>
+           <button class="btn success" data-action="done" type="button">Pause finie ✓</button>`
+        : '<button class="btn" data-action="todo" type="button">Annuler</button>';
+    return `
+    <li class="stop lunch ${status}${isNext ? ' next' : ''}" data-id="${stop.id}">
+      ${legLine(stop.leg)}
+      <div class="stop-card lunch-card">
+        <div class="stop-head">
+          <span class="num">P</span>
+          <div class="stop-text">
+            ${isNext ? '<span class="badge">Prochaine</span>' : ''}
+            <p class="title">${esc(stop.title)}</p>
+            <p class="sub">${esc(stop.label)}</p>
+            <p class="details lunch-time"></p>
+          </div>
+        </div>
+        <div class="actions">${actions}</div>
+      </div>
+    </li>`;
+  };
+  const interventionItem = (stop, k) => {
     const status = statusOf(stop);
     const isNext = stop.id === nextId;
     const actions =
@@ -501,7 +591,7 @@ function renderTour() {
       ${legLine(stop.leg)}
       <div class="stop-card">
         <div class="stop-head">
-          <span class="num">${k + 1}</span>
+          <span class="num">${k}</span>
           <div class="stop-text">
             ${isNext ? '<span class="badge">Prochaine</span>' : ''}
             ${status === 'absent' ? '<span class="badge absent">Client absent</span>' : ''}
@@ -569,23 +659,31 @@ function onTourClick(event) {
 // dès que l'heure est passée, ou avant un rendez-vous « Après-midi » (qui ne
 // commence pas avant la fin de la pause). Une journée finie avant midi n'en a pas.
 function planDay(tour, todo) {
-  const { onsiteMinutes, lunchStart, lunchMinutes } = state.settings;
+  const { onsiteMinutes, lunchMinutes } = state.settings;
   const minute = 60 * 1000;
   const now = Date.now();
-  const [hours, mins] = lunchStart.split(':').map(Number);
-  const lunchFrom = new Date(now).setHours(hours, mins, 0, 0);
+  const lunchFrom = lunchWindow(now).from;
   const lunchDuration = lunchMinutes * minute;
-  let lunch = null; // { beforeId, from, to }
-  let lunchDone = lunchMinutes <= 0 || now >= lunchFrom + lunchDuration;
+  // pause à l'agence : c'est une étape du parcours, prise en arrivant à l'agence
+  const agency = tour.stops.find(isLunch);
+  let lunch = null; // { beforeId, from, to, atAgency }
+  let lunchDone = lunchMinutes <= 0 || now >= lunchFrom + lunchDuration || (agency && statusOf(agency) !== 'todo');
   let time = now;
-  if (!lunchDone && now >= lunchFrom) {
+  if (!lunchDone && !agency && now >= lunchFrom) {
     // en pleine pause : la journée reprend à la fin de la pause
     time = lunchFrom + lunchDuration;
     lunch = { beforeId: todo[0]?.id ?? null, from: lunchFrom, to: time };
     lunchDone = true;
   }
   for (const stop of todo) {
-    if (!lunchDone && (time >= lunchFrom || stop.slot === 'AM')) {
+    if (isLunch(stop)) {
+      const from = Math.max(time + stop.leg.duration * 1000, lunchFrom);
+      time = from + lunchDuration;
+      lunch = { beforeId: stop.id, from, to: time, atAgency: true };
+      lunchDone = true;
+      continue;
+    }
+    if (!lunchDone && !agency && (time >= lunchFrom || stop.slot === 'AM')) {
       const from = Math.max(time, lunchFrom);
       time = from + lunchDuration;
       lunch = { beforeId: stop.id, from, to: time };
@@ -603,20 +701,23 @@ const fmtClock = (date) => `${date.getHours()} h ${String(date.getMinutes()).pad
 function renderProgress() {
   const tour = state.tour;
   const todo = tour.stops.filter((stop) => statusOf(stop) === 'todo');
+  const interventionsLeft = todo.filter((stop) => !isLunch(stop)).length;
   const absent = tour.stops.filter((stop) => statusOf(stop) === 'absent').length;
   const started = todo.length < tour.stops.length || tour.recalculatedAt;
   const driving = todo.reduce((total, stop) => total + stop.leg.duration, 0) + tour.back.duration;
   const { end, lunch } = planDay(tour, todo);
-  const details = todo.length
-    ? `Reste ${plural(todo.length, 'intervention')} · ${fmtDuration(driving)} de route`
+  const details = interventionsLeft
+    ? `Reste ${plural(interventionsLeft, 'intervention')} · ${fmtDuration(driving)} de route`
     : 'Toutes les interventions sont terminées';
   $('#tour-progress').innerHTML = `
     <p class="eta">Retour à la maison vers <b>${fmtClock(end)}</b>${started ? '' : ' <span>en partant maintenant</span>'}</p>
-    <p class="hint">${details}${lunch ? ' · pause déjeuner comprise' : ''}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>`;
+    <p class="hint">${details}${lunch ? (lunch.atAgency ? ' · pause à l’agence comprise' : ' · pause déjeuner comprise') : ''}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>`;
 
-  // repère « Pause déjeuner » dans la liste, avant l'intervention concernée
+  // horaires de la pause : sur l'étape « agence », ou repère dans la liste
+  const lunchTime = document.querySelector('#tour-list .lunch-time');
+  if (lunchTime) lunchTime.textContent = lunch?.atAgency ? `${fmtClock(new Date(lunch.from))} – ${fmtClock(new Date(lunch.to))}` : '';
   document.querySelector('#tour-list .lunch-break')?.remove();
-  const before = lunch && document.querySelector(`#tour-list .stop[data-id="${lunch.beforeId}"]`);
+  const before = lunch && !lunch.atAgency && document.querySelector(`#tour-list .stop[data-id="${lunch.beforeId}"]`);
   if (before) {
     before.insertAdjacentHTML(
       'beforebegin',
@@ -654,7 +755,9 @@ async function recalculate(added = []) {
   busy('Recherche de ta position…');
   try {
     const finished = tour.stops.filter((stop) => statusOf(stop) !== 'todo');
-    const todo = [...tour.stops.filter((stop) => statusOf(stop) === 'todo'), ...added];
+    // la pause à l'agence suit le réglage actuel : ajoutée, ou retirée si on n'y va plus
+    const todo = [...tour.stops.filter((stop) => statusOf(stop) === 'todo' && !isLunch(stop)), ...added];
+    if (!finished.some(isLunch) && lunchAtAgencyToday()) todo.push(lunchStop());
     const gps = await currentPosition();
     const from = gps ?? lastDonePlace(tour);
     const n = todo.length;
@@ -663,7 +766,7 @@ async function recalculate(added = []) {
     const matrix = await travelMatrix([from, ...todo, tour.end]);
     busy('Recherche du meilleur ordre…');
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const order = optimizeOrder(withSlots(matrix.durations, [null, ...todo, null]), 0, n + 1, todo.map((_, i) => i + 1));
+    const order = bestOrder(matrix.durations, todo);
     const ordered = order.map((i) => todo[i - 1]);
 
     busy('Tracé de l’itinéraire…');
@@ -689,7 +792,7 @@ async function recalculate(added = []) {
     tour.estimated = matrix.source !== 'osrm';
     tour.recalculatedAt = Date.now();
     const entry = state.history.find((e) => e.id === tour.createdAt);
-    if (entry) entry.stops = tour.stops.length;
+    if (entry) entry.stops = tour.stops.filter((stop) => !isLunch(stop)).length;
     saveState();
     renderTour();
     $('.stop.next')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -753,12 +856,14 @@ function drawMap(tour, nextId) {
   if (tour.from) {
     L.marker([tour.from.lat, tour.from.lon], { icon: pin('●', 'here') }).bindPopup(esc(tour.from.name)).addTo(mapLayer);
   }
-  tour.stops.forEach((stop, k) => {
-    const kind = statusOf(stop) !== 'todo' ? 'done' : stop.id === nextId ? 'next' : '';
-    L.marker([stop.lat, stop.lon], { icon: pin(k + 1, kind), zIndexOffset: stop.id === nextId ? 1000 : 0 })
-      .bindPopup(`<b>${k + 1}.</b> ${esc(stop.title ?? stop.raw)}`)
+  let number = 0;
+  for (const stop of tour.stops) {
+    const label = isLunch(stop) ? 'P' : ++number;
+    const kind = statusOf(stop) !== 'todo' ? 'done' : stop.id === nextId ? 'next' : isLunch(stop) ? 'endpoint' : '';
+    L.marker([stop.lat, stop.lon], { icon: pin(label, kind), zIndexOffset: stop.id === nextId ? 1000 : 0 })
+      .bindPopup(`<b>${label}.</b> ${esc(stop.title ?? stop.raw)}`)
       .addTo(mapLayer);
-  });
+  }
   map.invalidateSize();
   const fitKey = `${tour.createdAt}/${tour.recalculatedAt ?? 0}`;
   if (mapFittedFor !== fitKey) {

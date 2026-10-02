@@ -551,6 +551,19 @@ textarea:focus {
 }
 
 /* trait entre deux étapes, avec le temps de trajet */
+.lunch-where {
+  margin: 12px 0 0;
+}
+
+/* étape « Pause déjeuner à l'agence » */
+.stop-card.lunch-card {
+  background: var(--warn-bg);
+}
+
+.lunch-card .num {
+  background: var(--next);
+}
+
 /* repère de la pause déjeuner dans la liste */
 .lunch-break {
   margin: 4px 0 4px 14px;
