@@ -122,6 +122,7 @@ p {
 
 input[type="text"],
 input[type="number"],
+input[type="time"],
 textarea {
   width: 100%;
   padding: 12px;
@@ -139,9 +140,26 @@ textarea {
 
 input[type="text"]:focus,
 input[type="number"]:focus,
+input[type="time"]:focus,
 textarea:focus {
   outline: 2px solid var(--primary);
   outline-offset: -1px;
+}
+
+.two-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.small-label {
+  display: block;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.small-label input {
+  margin-top: 4px;
 }
 
 .inline-input {
@@ -533,6 +551,18 @@ textarea:focus {
 }
 
 /* trait entre deux étapes, avec le temps de trajet */
+/* repère de la pause déjeuner dans la liste */
+.lunch-break {
+  margin: 4px 0 4px 14px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--next);
+  border-radius: 0 10px 10px 0;
+  background: var(--warn-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .leg {
   margin-left: 27px;
   padding: 8px 0 8px 16px;

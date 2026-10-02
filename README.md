@@ -17,7 +17,8 @@ interventions de la journée, pour faire le moins de route possible.
    de la position GPS (ou de la dernière intervention faite), et « + Ajouter »
    insère une intervention urgente puis recalcule.
 6. L'heure de retour à la maison est estimée en continu (route qui reste +
-   temps moyen sur place par intervention, réglable dans les réglages).
+   temps moyen sur place par intervention + pause déjeuner, réglables ; les
+   rendez-vous de l'après-midi commencent après la pause).
 7. L'écran Statistiques montre le temps de route gagné par semaine et par
    mois (un parcours calculé compte pour sa journée).
 

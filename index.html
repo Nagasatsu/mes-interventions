@@ -63,6 +63,14 @@
           </div>
           <small class="hint">Sert à estimer l'heure de retour à la maison.</small>
         </label>
+        <fieldset class="field">
+          <legend>Pause déjeuner</legend>
+          <div class="two-cols">
+            <label class="small-label">Début<input id="lunch-start" type="time"></label>
+            <label class="small-label">Durée (minutes)<input id="lunch-minutes" type="number" min="0" max="240" step="5" inputmode="numeric"></label>
+          </div>
+          <small class="hint">Les rendez-vous de l'après-midi commencent après la pause. 0 minute = pas de pause.</small>
+        </fieldset>
         <button class="btn primary big" type="submit">Enregistrer</button>
         <button id="close-settings" class="btn" type="button">Annuler</button>
       </form>

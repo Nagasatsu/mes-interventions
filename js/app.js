@@ -57,7 +57,15 @@ function loadState() {
     // stockage indisponible : on repart de zéro
   }
   return {
-    settings: { home: null, work: null, startFrom: 'work', onsiteMinutes: 10, ...saved.settings },
+    settings: {
+      home: null,
+      work: null,
+      startFrom: 'work',
+      onsiteMinutes: 10,
+      lunchStart: '12:00',
+      lunchMinutes: 90,
+      ...saved.settings,
+    },
     draft: saved.draft || '',
     pending: saved.pending || null, // interventions en cours de vérification
     tour: saved.tour || null, // parcours calculé
@@ -108,6 +116,8 @@ function renderSettings() {
     radio.checked = radio.value === startFrom;
   }
   $('#onsite').value = state.settings.onsiteMinutes;
+  $('#lunch-start').value = state.settings.lunchStart;
+  $('#lunch-minutes').value = state.settings.lunchMinutes;
   $('#close-settings').hidden = homeView() === 'settings';
 }
 
@@ -116,7 +126,10 @@ async function saveSettings(event) {
   const homeQuery = $('#home').value.trim();
   const workQuery = $('#work').value.trim();
   const startFrom = document.querySelector('input[name=startFrom]:checked').value;
-  const onsiteMinutes = Math.min(240, Math.max(0, Math.round(Number($('#onsite').value) || 0)));
+  const minutes = (input) => Math.min(240, Math.max(0, Math.round(Number(input.value) || 0)));
+  const onsiteMinutes = minutes($('#onsite'));
+  const lunchStart = /^\d{2}:\d{2}$/.test($('#lunch-start').value) ? $('#lunch-start').value : '12:00';
+  const lunchMinutes = minutes($('#lunch-minutes'));
   if (startFrom === 'work' && !workQuery) {
     return toast('Indique l’adresse du travail, ou choisis de partir du domicile.');
   }
@@ -128,7 +141,7 @@ async function saveSettings(event) {
     ]);
     if (!home) return toast('Adresse du domicile introuvable. Ajoute le code postal ou la ville.');
     if (workQuery && !work) return toast('Adresse du travail introuvable. Ajoute le code postal ou la ville.');
-    state.settings = { home, work, startFrom, onsiteMinutes };
+    state.settings = { home, work, startFrom, onsiteMinutes, lunchStart, lunchMinutes };
     saveState();
     show(homeView());
     const doubtful = [['domicile', home], ['travail', work]].find(([, place]) => place?.doubtful);
@@ -472,7 +485,6 @@ function renderTour() {
     </div>
     ${saved.duration >= 60 ? `<p class="gain"><b>${fmtDuration(saved.duration)}</b><span>de route en moins par rapport à l'ordre de la liste${saved.distance >= 1000 ? ` (${fmtDistance(saved.distance)} de moins)` : ''}</span></p>` : ''}
     ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}`;
-  renderProgress();
 
   const stopItem = (stop, k) => {
     const status = statusOf(stop);
@@ -519,6 +531,7 @@ function renderTour() {
     ${tour.stops.map(stopItem).join('')}
     <li class="stop">${legLine(tour.back)}${endpoint('R', 'Retour · Domicile', tour.end)}</li>`;
 
+  renderProgress();
   drawMap(tour, nextId);
 }
 
@@ -551,13 +564,38 @@ function onTourClick(event) {
 
 // ---------- Avancement et heure de retour ----------
 
-// Heure de retour = maintenant + route qui reste + temps sur place pour chaque
-// intervention qui reste, arrondi à 5 minutes (c'est une estimation).
-function returnTime(tour, todo) {
-  const driving = todo.reduce((total, stop) => total + stop.leg.duration, 0) + tour.back.duration;
-  const onsite = todo.length * state.settings.onsiteMinutes * 60;
-  const step = 5 * 60 * 1000;
-  return new Date(Math.round((Date.now() + (driving + onsite) * 1000) / step) * step);
+// Déroulé estimé du reste de la journée, à partir de maintenant : route, temps
+// sur place, et pause déjeuner. La pause se prend entre deux interventions,
+// dès que l'heure est passée, ou avant un rendez-vous « Après-midi » (qui ne
+// commence pas avant la fin de la pause). Une journée finie avant midi n'en a pas.
+function planDay(tour, todo) {
+  const { onsiteMinutes, lunchStart, lunchMinutes } = state.settings;
+  const minute = 60 * 1000;
+  const now = Date.now();
+  const [hours, mins] = lunchStart.split(':').map(Number);
+  const lunchFrom = new Date(now).setHours(hours, mins, 0, 0);
+  const lunchDuration = lunchMinutes * minute;
+  let lunch = null; // { beforeId, from, to }
+  let lunchDone = lunchMinutes <= 0 || now >= lunchFrom + lunchDuration;
+  let time = now;
+  if (!lunchDone && now >= lunchFrom) {
+    // en pleine pause : la journée reprend à la fin de la pause
+    time = lunchFrom + lunchDuration;
+    lunch = { beforeId: todo[0]?.id ?? null, from: lunchFrom, to: time };
+    lunchDone = true;
+  }
+  for (const stop of todo) {
+    if (!lunchDone && (time >= lunchFrom || stop.slot === 'AM')) {
+      const from = Math.max(time, lunchFrom);
+      time = from + lunchDuration;
+      lunch = { beforeId: stop.id, from, to: time };
+      lunchDone = true;
+    }
+    time += stop.leg.duration * 1000 + onsiteMinutes * minute;
+  }
+  time += tour.back.duration * 1000;
+  const step = 5 * minute; // c'est une estimation : arrondi à 5 minutes
+  return { end: new Date(Math.round(time / step) * step), lunch };
 }
 
 const fmtClock = (date) => `${date.getHours()} h ${String(date.getMinutes()).padStart(2, '0')}`;
@@ -568,12 +606,23 @@ function renderProgress() {
   const absent = tour.stops.filter((stop) => statusOf(stop) === 'absent').length;
   const started = todo.length < tour.stops.length || tour.recalculatedAt;
   const driving = todo.reduce((total, stop) => total + stop.leg.duration, 0) + tour.back.duration;
+  const { end, lunch } = planDay(tour, todo);
   const details = todo.length
     ? `Reste ${plural(todo.length, 'intervention')} · ${fmtDuration(driving)} de route`
     : 'Toutes les interventions sont terminées';
   $('#tour-progress').innerHTML = `
-    <p class="eta">Retour à la maison vers <b>${fmtClock(returnTime(tour, todo))}</b>${started ? '' : ' <span>en partant maintenant</span>'}</p>
-    <p class="hint">${details}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>`;
+    <p class="eta">Retour à la maison vers <b>${fmtClock(end)}</b>${started ? '' : ' <span>en partant maintenant</span>'}</p>
+    <p class="hint">${details}${lunch ? ' · pause déjeuner comprise' : ''}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>`;
+
+  // repère « Pause déjeuner » dans la liste, avant l'intervention concernée
+  document.querySelector('#tour-list .lunch-break')?.remove();
+  const before = lunch && document.querySelector(`#tour-list .stop[data-id="${lunch.beforeId}"]`);
+  if (before) {
+    before.insertAdjacentHTML(
+      'beforebegin',
+      `<li class="lunch-break">Pause déjeuner · ${fmtClock(new Date(lunch.from))} – ${fmtClock(new Date(lunch.to))}</li>`,
+    );
+  }
 }
 
 // ---------- Recalcul en cours de journée ----------
