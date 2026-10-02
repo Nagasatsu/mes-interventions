@@ -8,7 +8,10 @@ interventions de la journée, pour faire le moins de route possible.
 3. Elle calcule l'ordre qui minimise le temps de trajet : départ du travail
    (ou du domicile), retour au domicile.
 4. Elle affiche le parcours sur une carte, avec un bouton Waze / Google Maps
-   par intervention et un bouton « Fait » pour suivre l'avancement.
+   par intervention, et des boutons « Fait » / « Absent » (client pas là)
+   pour suivre l'avancement.
+5. L'écran Statistiques montre le temps de route gagné par semaine et par
+   mois (un parcours calculé compte pour sa journée).
 
 C'est une « appli web installable » (PWA) : elle s'ouvre dans Chrome et
 s'ajoute à l'écran d'accueil comme une vraie appli. Pas besoin du Play Store.

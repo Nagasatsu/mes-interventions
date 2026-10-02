@@ -25,6 +25,9 @@
     <h1>Mes interventions</h1>
     <div class="topbar-actions">
       <button id="toggle-theme" class="icon-btn" type="button"></button>
+      <button id="open-stats" class="icon-btn" type="button" aria-label="Statistiques">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 20h18M6 20v-6M12 20V5M18 20v-9"/></svg>
+      </button>
       <button id="open-settings" class="icon-btn" type="button" aria-label="Réglages">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
       </button>
@@ -89,6 +92,26 @@
       <div id="map" class="map"></div>
       <ol id="tour-list" class="stops"></ol>
       <button id="new-tour" class="btn" type="button">Changer la liste</button>
+    </section>
+
+    <!-- Statistiques : temps gagné par semaine ou par mois -->
+    <section id="view-stats" class="view" hidden>
+      <h2>Statistiques</h2>
+      <div class="segmented" role="group" aria-label="Période">
+        <button type="button" data-period="week">Semaine</button>
+        <button type="button" data-period="month">Mois</button>
+      </div>
+      <div class="period-nav">
+        <button id="stats-prev" class="icon-btn" type="button" aria-label="Période précédente">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <p id="stats-label"></p>
+        <button id="stats-next" class="icon-btn" type="button" aria-label="Période suivante">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+      <div id="stats-content"></div>
+      <button id="close-stats" class="btn" type="button">Retour</button>
     </section>
   </main>
 
