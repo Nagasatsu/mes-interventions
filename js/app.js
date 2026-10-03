@@ -37,6 +37,10 @@ function isDoubtful(query, found) {
   const foundType = streetType(found.street ?? '');
   if (askedType && foundType && askedType !== foundType) return true;
   const asked = new Set(words(query).map((w) => ABBREVIATIONS[w] ?? w));
+  // pas la bonne ville : « … LENS » demandé mais trouvé à Fouquières-lès-Lens
+  // (sauf si le code postal demandé est le bon)
+  const samePostcode = found.postcode && query.includes(found.postcode);
+  if (!samePostcode && words(found.city ?? '').some((w) => !GENERIC_WORDS.has(w) && !asked.has(w))) return true;
   return words(found.street ?? '').some((w) => !GENERIC_WORDS.has(w) && !/^\d+$/.test(w) && !asked.has(w));
 }
 
@@ -229,8 +233,38 @@ async function setLunchAtAgency(value) {
   const tour = state.tour;
   if (!tour || $('#view-tour').hidden) return;
   if (Date.now() >= lunchWindow().to) return toast('La pause de midi est déjà passée aujourd’hui : le parcours ne change pas.');
-  const notStarted = tour.stops.every((stop) => statusOf(stop) === 'todo') && !tour.recalculatedAt;
-  await recalculate([], { fromStart: notStarted });
+  await recalculate([], { fromStart: notStarted(tour) });
+}
+
+// La journée n'a pas commencé : un recalcul repart du point de départ.
+const notStarted = (tour) => tour.stops.every((stop) => statusOf(stop) === 'todo') && !tour.recalculatedAt;
+
+// Correction de « Matin » / « Après-midi » sur une intervention du parcours :
+// l'ordre est recalculé tout de suite, et la ligne de la liste est corrigée
+// aussi (pour qu'un nouveau tri garde la correction).
+async function onSlotChange(event) {
+  const select = event.target.closest('select[data-slot]');
+  if (!select) return;
+  const tour = state.tour;
+  const stop = tour.stops.find((s) => s.id === Number(select.closest('[data-id]').dataset.id));
+  stop.slot = select.value || null;
+  const raw = withSlot(stop.raw, stop.slot);
+  state.draft = state.draft
+    .split('\n')
+    .map((line) => (line.trim() === stop.raw ? raw : line))
+    .join('\n');
+  stop.raw = raw;
+  saveState();
+  await recalculate([], { fromStart: notStarted(tour) });
+}
+
+const SLOT_LABEL = { M: 'Matin', AM: 'Après-midi' };
+
+// Réécrit une ligne de la liste avec « Matin | », « Après-midi | » ou « ? | » devant.
+function withSlot(raw, slot) {
+  const fields = raw.split(/\s*\|\s*/);
+  const rest = fields.length >= 2 && SLOT_FIELD.test(fields[0]) ? fields.slice(1) : [raw];
+  return [SLOT_LABEL[slot] ?? '?', ...rest].join(' | ');
 }
 
 function renderInput() {
@@ -297,7 +331,7 @@ async function importPhotos(files) {
       toast(
         `${plural(added, 'intervention ajoutée', 'interventions ajoutées')}` +
           (already ? `, ${already} déjà dans la liste` : '') +
-          (unknownSlot ? `. Matin / après-midi non lu pour ${unknownSlot} : remplace le « ? » en début de ligne.` : '.'),
+          (unknownSlot ? `. Matin / après-midi non lu pour ${unknownSlot} : tu pourras le choisir sur chaque intervention après le tri.` : '.'),
       );
     }
   } catch (err) {
@@ -305,6 +339,7 @@ async function importPhotos(files) {
   } finally {
     idle();
     $('#photo-input').value = '';
+    $('#scan-input').value = '';
   }
 }
 
@@ -618,7 +653,7 @@ function renderTour() {
             ${isNext ? '<span class="badge">Prochaine</span>' : ''}
             ${status === 'absent' ? '<span class="badge absent">Client absent</span>' : ''}
             ${stop.added ? '<span class="badge added">Ajoutée</span>' : ''}
-            ${stop.slot ? `<span class="badge slot">${stop.slot === 'M' ? 'Matin' : 'Après-midi'}</span>` : ''}
+            ${slotControl(stop, status)}
             <p class="title">${esc(stop.title ?? stop.raw)}</p>
             ${sameText(stop.title ?? stop.raw, stop.label) ? '' : `<p class="sub">${esc(stop.label)}</p>`}
             ${stop.details ? `<p class="details">${esc(detailsWithoutPhone(stop.details))}</p>` : ''}
@@ -628,6 +663,13 @@ function renderTour() {
         <div class="actions">${actions}</div>
       </div>
     </li>`;
+  };
+  const slotControl = (stop, status) => {
+    if (status !== 'todo') return stop.slot ? `<span class="badge slot">${SLOT_LABEL[stop.slot]}</span>` : '';
+    const option = (value, text) => `<option value="${value}"${(stop.slot ?? '') === value ? ' selected' : ''}>${text}</option>`;
+    return `<select class="slot-select${stop.slot ? '' : ' unset'}" data-slot aria-label="Matin ou après-midi">
+      ${option('', 'Matin ou après-midi ?')}${option('M', 'Matin')}${option('AM', 'Après-midi')}
+    </select>`;
   };
   const endpoint = (letter, title, place) => `
     <div class="stop-card endpoint">
@@ -845,9 +887,11 @@ async function addStop(event) {
   if (!found) return toast('Adresse introuvable. Ajoute le code postal ou la ville.');
   if (isDoubtful(query, found) && !confirm(`Adresse trouvée : « ${found.label} ». C'est bien ça ?`)) return;
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
-  const stop = { id, raw, query, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
+  const slot = $('#add-slot').value || null;
+  const stop = { id, raw, query, slot, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
   $('#add-form').hidden = true;
   $('#add-address').value = '';
+  $('#add-slot').value = '';
   await recalculate([stop]);
 }
 
@@ -1221,7 +1265,9 @@ function init() {
 
   $('#list').addEventListener('input', onListInput);
   $('#paste').addEventListener('click', pasteFromClipboard);
-  $('#photo').addEventListener('click', () => $('#photo-input').click());
+  $('#photo').addEventListener('click', () => $('#scan-input').click());
+  $('#scan-input').addEventListener('change', (event) => importPhotos(event.target.files));
+  $('#pick-photos').addEventListener('click', () => $('#photo-input').click());
   $('#photo-input').addEventListener('change', (event) => importPhotos(event.target.files));
   $('#clear-list').addEventListener('click', () => {
     $('#list').value = '';
@@ -1245,6 +1291,7 @@ function init() {
   });
 
   $('#tour-list').addEventListener('click', onTourClick);
+  $('#tour-list').addEventListener('change', onSlotChange);
   for (const button of document.querySelectorAll('[data-agency]')) {
     button.addEventListener('click', () => setLunchAtAgency(button.dataset.agency === 'yes'));
   }

@@ -120,6 +120,7 @@ p {
   font-weight: 600;
 }
 
+select,
 input[type="text"],
 input[type="number"],
 input[type="time"],
@@ -138,6 +139,7 @@ textarea {
   min-height: 180px;
 }
 
+select:focus,
 input[type="text"]:focus,
 input[type="number"]:focus,
 input[type="time"]:focus,
@@ -524,6 +526,23 @@ textarea:focus {
 .badge.slot {
   background: var(--border);
   color: var(--text);
+}
+
+/* « Matin » / « Après-midi » modifiable directement sur la carte */
+select.slot-select {
+  width: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+select.slot-select.unset {
+  background: var(--warn-bg);
+  color: var(--warn);
 }
 
 .badge.added {

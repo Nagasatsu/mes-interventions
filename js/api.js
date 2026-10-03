@@ -20,8 +20,8 @@ export async function geocode(query, near) {
   const feature = data.features?.[0];
   if (!feature) return null;
   const [lon, lat] = feature.geometry.coordinates;
-  const { label, score, type, street, name } = feature.properties;
-  return { label, lat, lon, score, type, street: street || name };
+  const { label, score, type, street, name, city, postcode } = feature.properties;
+  return { label, lat, lon, score, type, street: street || name, city, postcode };
 }
 
 // Géocode une liste d'adresses, quelques-unes à la fois.

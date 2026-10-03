@@ -3,7 +3,8 @@
 Application pour téléphone (Android) qui remet dans le meilleur ordre les
 interventions de la journée, pour faire le moins de route possible.
 
-1. On prend en photo la « Liste des évènements par agent » (une photo par page) :
+1. On scanne la « Liste des évènements par agent » (l'appareil photo s'ouvre
+   directement, une page à la fois ; on peut aussi choisir des photos déjà prises) :
    le téléphone lit la feuille lui-même (Tesseract), sans envoyer la photo.
    On peut aussi coller une liste, une intervention par ligne.
 2. L'appli trouve chaque adresse et signale celles qui sont douteuses.
