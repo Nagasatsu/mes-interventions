@@ -22,9 +22,9 @@ function doubtReason(query, found) {
 
 const isDoubtful = (query, found) => doubtReason(query, found) !== '';
 
-// Une adresse dans une autre ville que celle écrite : l'erreur la plus grave
-// pour un parcours. Elle doit être confirmée explicitement.
-const isWrongCity = (query, found) => found.type !== 'municipality' && !compare(query, found).city;
+// La recherche d'adresse ne renvoie jamais une autre ville que celle écrite
+// (voir geocode). Quand elle ne reconnaît aucune ville, il faut corriger le texte.
+const UNKNOWN_CITY = 'Ville non reconnue. Vérifie le nom de la ville dans l’adresse (ou ajoute-la).';
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -189,7 +189,9 @@ async function saveSettings(event) {
       workQuery ? findPlace(workQuery, state.settings.work) : null,
     ]);
     if (!home) return toast('Adresse du domicile introuvable. Ajoute le code postal ou la ville.');
+    if (home.unknownCity) return toast('Domicile : ville non reconnue. Ajoute la ville ou le code postal.');
     if (workQuery && !work) return toast('Adresse du travail introuvable. Ajoute le code postal ou la ville.');
+    if (work?.unknownCity) return toast('Travail : ville non reconnue. Ajoute la ville ou le code postal.');
     const { lunchAtAgency } = state.settings;
     state.settings = { home, work, startFrom, onsiteMinutes, lunchStart, lunchMinutes, lunchAtAgency };
     saveState();
@@ -208,7 +210,8 @@ async function saveSettings(event) {
 async function findPlace(query, previous) {
   if (previous?.query === query) return previous;
   const found = await geocode(query);
-  return found && { query, label: found.label, lat: found.lat, lon: found.lon, doubtful: isDoubtful(query, found) };
+  if (!found || found.unknownCity) return found;
+  return { query, label: found.label, lat: found.lat, lon: found.lon, doubtful: isDoubtful(query, found) };
 }
 
 // ---------- Saisie de la liste ----------
@@ -458,17 +461,11 @@ async function optimize() {
 
 function toStop(id, line, found) {
   const { raw, query, title, details, phone, slot } = line;
-  const stop = { id, raw, query, title, details, phone, slot, found: Boolean(found) };
-  if (found) {
+  const usable = Boolean(found) && !found.unknownCity;
+  const stop = { id, raw, query, title, details, phone, slot, found: usable, unknownCity: Boolean(found?.unknownCity) };
+  if (usable) {
     const doubt = doubtReason(line.query, found);
-    Object.assign(stop, {
-      label: found.label,
-      lat: found.lat,
-      lon: found.lon,
-      doubtful: doubt !== '',
-      doubt,
-      wrongCity: isWrongCity(line.query, found),
-    });
+    Object.assign(stop, { label: found.label, lat: found.lat, lon: found.lon, doubtful: doubt !== '', doubt });
   }
   return stop;
 }
@@ -483,16 +480,15 @@ function renderReview() {
   $('#review-intro').textContent =
     `${plural(okCount, 'adresse trouvée', 'adresses trouvées')} sans souci. ` +
     'Pour les autres, corrige le texte puis « Chercher », ou retire-les.';
-  // une adresse introuvable, ou trouvée dans une autre ville, bloque la suite
-  const mustFix = (stop) => !stop.found || (stop.wrongCity && !stop.kept);
+  // une adresse introuvable (ou dont la ville n'est pas reconnue) bloque la suite
   $('#review-list').innerHTML = items
     .map((stop) => {
-      const status = mustFix(stop) ? 'bad' : needsCheck(stop) ? 'warn' : 'ok';
+      const status = !stop.found ? 'bad' : needsCheck(stop) ? 'warn' : 'ok';
       const result = !stop.found
-        ? 'Adresse introuvable'
-        : stop.wrongCity
-          ? `Attention, ${esc(stop.doubt)} : <b>${esc(stop.label)}</b>`
-          : `${status === 'warn' ? `Trouvé, mais pas sûr (${esc(stop.doubt)})` : 'Trouvé'} : <b>${esc(stop.label)}</b>`;
+        ? stop.unknownCity
+          ? UNKNOWN_CITY
+          : 'Adresse introuvable'
+        : `${status === 'warn' ? `Trouvé, mais pas sûr (${esc(stop.doubt)})` : 'Trouvé'} : <b>${esc(stop.label)}</b>`;
       return `
         <li class="card ${status}" data-id="${stop.id}">
           <p class="raw">${esc(stop.title ?? stop.raw)}</p>
@@ -503,11 +499,10 @@ function renderReview() {
             <button class="btn" data-action="search" type="button">Chercher</button>
             <button class="btn danger" data-action="remove" type="button">Retirer</button>
           </div>
-          ${stop.found && stop.wrongCity && !stop.kept ? '<button class="btn link" data-action="keep" type="button">C’est quand même la bonne adresse</button>' : ''}
         </li>`;
     })
     .join('');
-  const blocked = items.some(mustFix);
+  const blocked = items.some((stop) => !stop.found);
   const button = $('#review-continue');
   button.disabled = blocked || state.pending.length === 0;
   button.textContent = blocked ? 'Corrige ou retire les adresses en rouge' : 'Calculer le meilleur ordre';
@@ -521,8 +516,6 @@ async function onReviewClick(event) {
   const stop = state.pending[index];
   if (button.dataset.action === 'remove') {
     state.pending.splice(index, 1);
-  } else if (button.dataset.action === 'keep') {
-    stop.kept = true;
   } else {
     const query = item.querySelector('input').value.trim();
     busy('Recherche…');
@@ -530,6 +523,7 @@ async function onReviewClick(event) {
       const found = await geocode(query, startPlace());
       state.pending[index] = { ...toStop(stop.id, { ...stop, query }, found), reviewing: true };
       if (!found) toast('Toujours introuvable. Essaie avec le code postal et la ville.');
+      else if (found.unknownCity) toast(UNKNOWN_CITY);
     } catch (err) {
       toast(err.message);
     } finally {
@@ -981,12 +975,10 @@ async function addStop(event) {
   } finally {
     idle();
   }
-  if (!found) return toast('Adresse introuvable. Ajoute le code postal ou la ville.');
+  if (!found) return toast('Adresse introuvable. Vérifie la rue et la ville.');
+  if (found.unknownCity) return toast('Ville non reconnue. Écris l’adresse avec sa ville, par exemple « 12 rue Jean Jaurès Denain ».');
   const doubt = doubtReason(query, found);
-  const question = isWrongCity(query, found)
-    ? `ATTENTION : ${doubt}.\n\nAdresse trouvée : « ${found.label} ».\n\nL'ajouter quand même ?`
-    : `Adresse trouvée : « ${found.label} » (${doubt}).\n\nC'est bien ça ?`;
-  if (doubt && !confirm(question)) return;
+  if (doubt && !confirm(`Adresse trouvée : « ${found.label} » (${doubt}).\n\nC'est bien ça ?`)) return;
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
   const slot = $('#add-slot').value || null;
   const stop = { id, raw, query, slot, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };

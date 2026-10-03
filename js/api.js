@@ -10,26 +10,34 @@ const OSRM_URL = 'https://router.project-osrm.org';
 const GEOCODE_PARALLEL = 5;
 const CANDIDATES = 8; // on regarde plusieurs résultats, pas seulement le premier
 
-// Adresse → coordonnées. Renvoie null si rien de plausible n'est trouvé.
+// Adresse → coordonnées.
+//
+// Règle de sécurité : la ville écrite dans l'adresse fait foi (sur la feuille,
+// elle vient de la base de données de l'entreprise). On ne renvoie donc JAMAIS
+// une adresse située dans une autre ville. Résultats possibles :
+// - l'adresse trouvée, dans la ville (ou le code postal) écrite ;
+// - null : rien trouvé ;
+// - { unknownCity: true } : aucune ville reconnue dans le texte, on ne devine pas.
 //
 // Le service d'adresses classe ses résultats par ressemblance du texte : pour
 // « 12 rue Jean Jaurès Denain » il met en premier « 12 Rue Jean Jaurès à
 // Fenain » (nom proche) avant « 12 Avenue Jean Jaurès à Denain ». On choisit
-// donc nous-mêmes parmi plusieurs résultats, en exigeant la bonne ville, et
-// on ne propose jamais une autre ville que celle qui est écrite.
+// donc nous-mêmes parmi plusieurs résultats, en exigeant la bonne ville.
 export async function geocode(query, near) {
   const q = cityLast(query.replace(/^[^\p{L}\p{N}]+/u, '').replace(/\s+/g, ' ').trim()).slice(0, 200);
   if (q.length < 3) return null;
   const best = pickBest(q, await search({ q, limit: CANDIDATES }, near));
-  if (!best || compare(q, best).city) return best ?? null;
+  if (!best) return null;
+  if (compare(q, best).city) return best;
 
   // Le meilleur résultat n'est pas dans une ville écrite dans la demande.
   // Si la demande nomme une ville (ou un code postal), on cherche uniquement là.
   const postcode = q.match(/(?<!\d)\d{5}(?!\d)/)?.[0];
   const citycode = postcode ? null : await askedCity(q, near);
-  if (!postcode && !citycode) return best; // aucune ville écrite : le résultat sera signalé « pas sûr »
-  const inCity = await search({ q, limit: CANDIDATES, ...(postcode ? { postcode } : { citycode }) });
-  return pickBest(q, inCity) ?? null;
+  if (!postcode && !citycode) return { unknownCity: true };
+  const inCity = pickBest(q, await search({ q, limit: CANDIDATES, ...(postcode ? { postcode } : { citycode }) }));
+  if (!inCity) return null;
+  return compare(q, inCity).city ? inCity : { unknownCity: true };
 }
 
 async function search(params, near) {
