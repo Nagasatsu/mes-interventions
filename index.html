@@ -22,7 +22,12 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>Mes interventions</h1>
+    <div class="topbar-title">
+      <button id="nav-back" class="icon-btn" type="button" aria-label="Retour" hidden>
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <h1 id="app-title">Mes interventions</h1>
+    </div>
     <div class="topbar-actions">
       <button id="toggle-theme" class="icon-btn" type="button"></button>
       <button id="open-stats" class="icon-btn" type="button" aria-label="Statistiques">
@@ -37,7 +42,7 @@
   <main>
     <!-- Réglages : domicile, travail, point de départ -->
     <section id="view-settings" class="view" hidden>
-      <h2>Réglages</h2>
+      <p id="welcome" class="hint" hidden>Bienvenue ! Pour commencer, indique ton domicile et ton agence.</p>
       <form id="settings-form">
         <label class="field">
           <span>Adresse du domicile</span>
@@ -72,7 +77,6 @@
           <small class="hint">Les rendez-vous de l'après-midi commencent après la pause. 0 minute = pas de pause.</small>
         </fieldset>
         <button class="btn primary big" type="submit">Enregistrer</button>
-        <button id="close-settings" class="btn" type="button">Annuler</button>
       </form>
       <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet, avec ta position GPS quand tu recalcules depuis ta position). Les photos de la liste sont lues sur le téléphone et ne sont envoyées nulle part ; seules les adresses partent à la recherche. Une copie des pages scannées reste sur ce téléphone jusqu'à ce que tu effaces la liste. Rien n'est enregistré ailleurs que sur ce téléphone.</p>
     </section>
@@ -106,16 +110,13 @@
         <button id="paste" class="btn" type="button">Coller</button>
         <button id="clear-list" class="btn" type="button">Effacer</button>
       </div>
-      <button id="back-to-tour" class="btn link" type="button">Revenir au parcours en cours</button>
     </section>
 
     <!-- Vérification des adresses douteuses -->
     <section id="view-review" class="view" hidden>
-      <h2>Adresses à vérifier</h2>
       <p id="review-intro" class="hint"></p>
       <ul id="review-list" class="cards"></ul>
       <button id="review-continue" class="btn primary big" type="button">Continuer</button>
-      <button id="review-cancel" class="btn" type="button">Retour à la liste</button>
     </section>
 
     <!-- Tournée calculée -->
@@ -159,7 +160,6 @@
 
     <!-- Statistiques : temps gagné par semaine ou par mois -->
     <section id="view-stats" class="view" hidden>
-      <h2>Statistiques</h2>
       <div class="segmented" role="group" aria-label="Période">
         <button type="button" data-period="week">Semaine</button>
         <button type="button" data-period="month">Mois</button>
@@ -174,7 +174,6 @@
         </button>
       </div>
       <div id="stats-content"></div>
-      <button id="close-stats" class="btn" type="button">Retour</button>
       <button id="reset-stats" class="btn link danger" type="button">Effacer toutes les statistiques</button>
     </section>
   </main>

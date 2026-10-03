@@ -54,7 +54,7 @@ function loadState() {
       ...saved.settings,
     },
     draft: saved.draft || '',
-    pending: saved.pending || null, // interventions en cours de vérification
+    pending: null, // interventions en cours de vérification (pas reprises après fermeture)
     tour: saved.tour || null, // parcours calculé
     history: saved.history || [], // un résumé par parcours, pour les statistiques
   };
@@ -69,21 +69,83 @@ function saveState() {
 }
 
 // ---------- Navigation entre les écrans ----------
+//
+// L'écran principal (le parcours, ou la liste tant qu'il n'y a pas de
+// parcours) est la base. Les autres écrans s'ouvrent « par-dessus » et sont
+// inscrits dans l'historique du navigateur : le bouton Retour du téléphone, ou
+// la flèche en haut à gauche, ramène à l'écran d'avant au lieu de quitter
+// l'appli. La feuille scannée et le formulaire d'ajout se referment de même.
 
-function show(view) {
+const TITLES = { settings: 'Réglages', stats: 'Statistiques', input: 'Liste du jour', review: 'Adresses à vérifier' };
+let currentView = null;
+let depth = 0; // nombre d'écrans ou de volets ouverts au-dessus de l'écran principal
+
+function render(view) {
+  currentView = view;
   for (const section of document.querySelectorAll('.view')) {
     section.hidden = section.id !== `view-${view}`;
   }
   window.scrollTo(0, 0);
   ({ settings: renderSettings, input: renderInput, review: renderReview, tour: renderTour, stats: renderStats })[view]();
+  renderTopbar();
+}
+
+function renderTopbar() {
+  $('#nav-back').hidden = depth === 0;
+  $('#app-title').textContent = (depth > 0 && TITLES[currentView]) || 'Mes interventions';
+}
+
+// Ouvre un écran par-dessus l'écran actuel.
+function open(view) {
+  if (view === currentView) return;
+  depth++;
+  history.pushState({ view, depth }, '');
+  render(view);
+}
+
+// Ouvre un volet du même écran (feuille scannée, formulaire d'ajout).
+function openOverlay(overlay) {
+  depth++;
+  history.pushState({ view: currentView, depth, overlay }, '');
+  showOverlay(overlay);
+  renderTopbar();
+}
+
+function showOverlay(overlay) {
+  if (overlay !== 'viewer') closeViewer();
+  $('#add-form').hidden = overlay !== 'add';
+}
+
+// Revient d'un cran, comme le bouton Retour du téléphone.
+function goBack() {
+  if (depth > 0) history.back();
+}
+
+// Revient à l'écran principal, quel que soit le nombre d'écrans ouverts.
+function goHome() {
+  if (depth > 0) history.go(-depth);
+  else render(homeView());
+}
+
+// Le navigateur vient de revenir en arrière (ou en avant) : on affiche l'écran correspondant.
+function onPopState(event) {
+  const leaving = currentView;
+  depth = event.state?.depth ?? 0;
+  showOverlay(event.state?.overlay);
+  if (leaving === 'review' && state.pending) {
+    state.pending = null; // vérification abandonnée
+    saveState();
+  }
+  let view = depth === 0 ? homeView() : event.state.view;
+  if (view === 'review' && !state.pending) view = homeView();
+  if (view !== currentView) render(view);
+  else renderTopbar();
 }
 
 function homeView() {
   const { home, work, startFrom } = state.settings;
   if (!home || (startFrom === 'work' && !work)) return 'settings';
-  if (state.tour) return 'tour';
-  if (state.pending) return 'review';
-  return 'input';
+  return state.tour ? 'tour' : 'input';
 }
 
 function startPlace() {
@@ -105,7 +167,7 @@ function renderSettings() {
   $('#onsite').value = state.settings.onsiteMinutes;
   $('#lunch-start').value = state.settings.lunchStart;
   $('#lunch-minutes').value = state.settings.lunchMinutes;
-  $('#close-settings').hidden = homeView() === 'settings';
+  $('#welcome').hidden = homeView() !== 'settings';
 }
 
 async function saveSettings(event) {
@@ -131,7 +193,8 @@ async function saveSettings(event) {
     const { lunchAtAgency } = state.settings;
     state.settings = { home, work, startFrom, onsiteMinutes, lunchStart, lunchMinutes, lunchAtAgency };
     saveState();
-    show(homeView());
+    if (depth > 0) goBack();
+    else render(homeView());
     const doubtful = [['domicile', home], ['travail', work]].find(([, place]) => place?.doubtful);
     if (doubtful) toast(`Adresse du ${doubtful[0]} pas sûre : « ${doubtful[1].label} ». Corrige-la dans les réglages si besoin.`);
   } catch (err) {
@@ -257,7 +320,6 @@ function renderInput() {
   $('#list').value = state.draft;
   updateCount();
   renderAgencyToggle();
-  $('#back-to-tour').hidden = !state.tour;
 }
 
 function updateCount() {
@@ -353,6 +415,7 @@ async function openViewer() {
     })
     .join('');
   $('#viewer').hidden = false;
+  openOverlay('viewer');
 }
 
 function closeViewer() {
@@ -384,7 +447,7 @@ async function optimize() {
     state.pending = lines.map((line, i) => toStop(i + 1, line, results[i]));
     for (const stop of state.pending) stop.reviewing = needsCheck(stop);
     saveState();
-    if (state.pending.some((stop) => stop.reviewing)) show('review');
+    if (state.pending.some((stop) => stop.reviewing)) open('review');
     else await computeTour();
   } catch (err) {
     toast(err.message);
@@ -620,7 +683,7 @@ async function computeTour() {
   };
   state.pending = null;
   saveState();
-  show('tour');
+  goHome();
 }
 
 // ---------- Affichage de la tournée ----------
@@ -927,7 +990,8 @@ async function addStop(event) {
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
   const slot = $('#add-slot').value || null;
   const stop = { id, raw, query, slot, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
-  $('#add-form').hidden = true;
+  if (history.state?.overlay === 'add') goBack();
+  else $('#add-form').hidden = true;
   $('#add-address').value = '';
   $('#add-slot').value = '';
   await recalculate([stop]);
@@ -1254,7 +1318,6 @@ function receiveSharedText() {
   const params = new URLSearchParams(location.search);
   const shared = params.get('text') || params.get('url');
   if (!shared) return false;
-  history.replaceState(null, '', location.pathname);
   state.draft = shared;
   saveState();
   return true;
@@ -1266,13 +1329,14 @@ function init() {
   renderThemeButton();
   $('#toggle-theme').addEventListener('click', toggleTheme);
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', followPhoneTheme);
-  $('#open-settings').addEventListener('click', () => show('settings'));
+  $('#nav-back').addEventListener('click', goBack);
+  window.addEventListener('popstate', onPopState);
+  $('#open-settings').addEventListener('click', () => open('settings'));
 
   $('#open-stats').addEventListener('click', () => {
     statsView.offset = 0;
-    show('stats');
+    open('stats');
   });
-  $('#close-stats').addEventListener('click', () => show(homeView()));
   $('#reset-stats').addEventListener('click', () => {
     if (!confirm('Effacer toutes les statistiques ? Elles ne pourront pas être récupérées.')) return;
     state.history = [];
@@ -1298,7 +1362,6 @@ function init() {
   $('#stats-content').addEventListener('focusin', showChartTip);
   $('#stats-content').addEventListener('pointerleave', hideChartTip);
   $('#stats-content').addEventListener('focusout', hideChartTip);
-  $('#close-settings').addEventListener('click', () => show(homeView()));
   $('#settings-form').addEventListener('submit', saveSettings);
 
   $('#list').addEventListener('input', onListInput);
@@ -1308,7 +1371,7 @@ function init() {
   $('#pick-photos').addEventListener('click', () => $('#photo-input').click());
   $('#photo-input').addEventListener('change', (event) => importPhotos(event.target.files));
   for (const button of document.querySelectorAll('.view-pages')) button.addEventListener('click', openViewer);
-  $('#close-viewer').addEventListener('click', closeViewer);
+  $('#close-viewer').addEventListener('click', goBack);
   $('#viewer-pages').addEventListener('click', (event) => {
     if (event.target.matches('img')) event.target.classList.toggle('zoomed');
   });
@@ -1326,7 +1389,6 @@ function init() {
     $('#list').focus();
   });
   $('#optimize').addEventListener('click', optimize);
-  $('#back-to-tour').addEventListener('click', () => show('tour'));
 
   $('#review-list').addEventListener('click', onReviewClick);
   $('#review-list').addEventListener('keydown', (event) => {
@@ -1335,11 +1397,6 @@ function init() {
     }
   });
   $('#review-continue').addEventListener('click', continueReview);
-  $('#review-cancel').addEventListener('click', () => {
-    state.pending = null;
-    saveState();
-    show('input');
-  });
 
   $('#tour-list').addEventListener('click', onTourClick);
   $('#tour-list').addEventListener('change', onSlotChange);
@@ -1348,12 +1405,10 @@ function init() {
   }
   $('#recalc').addEventListener('click', () => recalculate());
   $('#show-add').addEventListener('click', () => {
-    $('#add-form').hidden = false;
+    if ($('#add-form').hidden) openOverlay('add');
     $('#add-address').focus();
   });
-  $('#cancel-add').addEventListener('click', () => {
-    $('#add-form').hidden = true;
-  });
+  $('#cancel-add').addEventListener('click', goBack);
   $('#add-form').addEventListener('submit', addStop);
   // l'heure de retour avance avec l'horloge, et se met à jour au retour de Waze / Maps
   const refreshProgress = () => {
@@ -1361,11 +1416,14 @@ function init() {
   };
   setInterval(refreshProgress, 60000);
   document.addEventListener('visibilitychange', refreshProgress);
-  $('#new-tour').addEventListener('click', () => show('input'));
+  $('#new-tour').addEventListener('click', () => open('input'));
 
+  // Démarrage : l'écran principal est la base de l'historique. Un texte partagé
+  // depuis une autre appli ouvre la liste par-dessus le parcours en cours.
   const shared = receiveSharedText();
-  const start = homeView();
-  show(shared && start !== 'settings' ? 'input' : start);
+  history.replaceState({ depth: 0 }, '', location.pathname);
+  render(homeView());
+  if (shared && currentView === 'tour') open('input');
 
   if ('serviceWorker' in navigator) {
     // Quand une nouvelle version de l'appli prend le relais, on recharge une

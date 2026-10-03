@@ -68,9 +68,25 @@ body {
   color: var(--on-primary);
 }
 
+.topbar-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .topbar h1 {
+  overflow: hidden;
   margin: 0;
   font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* flèche « Retour » des écrans ouverts par-dessus l'écran principal */
+#nav-back {
+  flex: none;
+  margin-left: -12px;
+  cursor: pointer;
 }
 
 .topbar-actions {
