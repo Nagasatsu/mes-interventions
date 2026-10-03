@@ -45,6 +45,13 @@ node dev-server.mjs
 
 puis ouvrir http://localhost:8000
 
+## Mettre en ligne une nouvelle version
+
+Augmenter le numéro de version dans `sw.js` (`mes-interventions-vN`) à chaque
+mise en ligne, puis `git push`. Sans ce changement, un téléphone où l'appli
+est restée ouverte en arrière-plan garde l'ancienne version. Le numéro
+s'affiche en bas de l'écran Réglages.
+
 ## Fichiers
 
 | Fichier | Rôle |
