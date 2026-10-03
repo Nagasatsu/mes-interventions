@@ -98,6 +98,7 @@ function render(view) {
   window.scrollTo(0, 0);
   ({ settings: renderSettings, input: renderInput, review: renderReview, tour: renderTour, stats: renderStats })[view]();
   renderTopbar();
+  applyUpdate();
 }
 
 function renderTopbar() {
@@ -178,6 +179,7 @@ function renderSettings() {
   $('#lunch-start').value = state.settings.lunchStart;
   $('#lunch-minutes').value = state.settings.lunchMinutes;
   $('#welcome').hidden = homeView() !== 'settings';
+  showVersion();
 }
 
 async function saveSettings(event) {
@@ -1195,6 +1197,7 @@ function busy(text) {
 
 function idle() {
   $('#busy').hidden = true;
+  applyUpdate();
 }
 
 let toastTimer;
@@ -1536,18 +1539,49 @@ function init() {
   if (shared && currentView === 'tour') open('input');
 
   if ('serviceWorker' in navigator) {
-    // Quand une nouvelle version de l'appli prend le relais, on recharge une
-    // fois pour l'afficher tout de suite. Rien n'est perdu : tout est déjà
+    // Quand une nouvelle version de l'appli prend le relais, on recharge pour
+    // l'afficher (voir applyUpdate). Rien n'est perdu : tout est déjà
     // sauvegardé sur le téléphone.
     const isUpdate = Boolean(navigator.serviceWorker.controller);
-    let reloading = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!isUpdate || reloading) return;
-      reloading = true;
-      location.reload();
+      if (!isUpdate) return;
+      updateReady = true;
+      applyUpdate();
     });
-    navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker', err));
+    navigator.serviceWorker
+      .register('sw.js', { updateViaCache: 'none' })
+      .then((registration) => {
+        // L'appli installée reste ouverte en arrière-plan, parfois plusieurs
+        // jours, sans jamais se recharger : à chaque retour dessus, on regarde
+        // s'il existe une nouvelle version.
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') registration.update().catch(() => {});
+        });
+      })
+      .catch((err) => console.warn('Service worker', err));
   }
+}
+
+// ---------- Mise à jour de l'appli ----------
+
+const VERSION_PREFIX = 'mes-interventions-v'; // nom de la copie locale de l'appli, voir sw.js
+let updateReady = false;
+let reloading = false;
+
+// Une nouvelle version est prête : on recharge, mais jamais au milieu d'un
+// travail (lecture d'une photo, calcul, vérification des adresses, formulaire
+// ouvert). Rappelée à la fin de chacun de ces travaux.
+function applyUpdate() {
+  if (!updateReady || reloading || depth > 0 || !$('#busy').hidden) return;
+  reloading = true;
+  location.reload();
+}
+
+// Numéro de la version installée, affiché dans les réglages.
+async function showVersion() {
+  const names = await window.caches?.keys().catch(() => []);
+  const name = names?.find((key) => key.startsWith(VERSION_PREFIX));
+  $('#app-version').textContent = name ? `Version ${name.slice(VERSION_PREFIX.length)}` : '';
 }
 
 init();
