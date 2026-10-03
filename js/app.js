@@ -220,6 +220,8 @@ const POSTCODE = /(^|\D)\d{5}(\D|$)/;
 
 // Ligne écrite par la lecture de photo : « Matin | adresse | nom · tél | libellé ».
 const SLOT_FIELD = /^(matin|m|apr[eè]s[- ]?midi|am|\?)$/i;
+// Un « ! » au début de la ligne : intervention prioritaire (à faire en premier).
+const PRIORITY_MARK = /^!+\s*/;
 
 // Une intervention par ligne.
 function parseList(text) {
@@ -232,13 +234,15 @@ function parseList(text) {
 
 function parseLine(raw) {
   const firstPhone = (text) => text.match(PHONE)?.[0].replace(/\D/g, '') ?? null;
-  const fields = raw.split(/\s*\|\s*/);
+  const priority = PRIORITY_MARK.test(raw);
+  const text = raw.replace(PRIORITY_MARK, '');
+  const fields = text.split(/\s*\|\s*/);
   if (fields.length >= 2 && SLOT_FIELD.test(fields[0])) {
     const slot = /^(matin|m)$/i.test(fields[0]) ? 'M' : /^(apr|am)/i.test(fields[0]) ? 'AM' : null;
     const details = fields.slice(2).filter(Boolean).join(' · ');
-    return { raw, query: cleanStreet(fields[1]), title: fields[1], details, phone: firstPhone(details), slot };
+    return { raw, query: cleanStreet(fields[1]), title: fields[1], details, phone: firstPhone(details), slot, priority };
   }
-  return { raw, query: cleanStreet(extractAddress(raw)), title: raw, details: '', phone: firstPhone(raw), slot: null };
+  return { raw, query: cleanStreet(extractAddress(text)), title: text, details: '', phone: firstPhone(text), slot: null, priority };
 }
 
 function extractAddress(line) {
@@ -296,24 +300,44 @@ async function onSlotChange(event) {
   const tour = state.tour;
   const stop = tour.stops.find((s) => s.id === Number(select.closest('[data-id]').dataset.id));
   stop.slot = select.value || null;
-  const raw = withSlot(stop.raw, stop.slot);
+  rewriteLine(stop, withSlot(stop.raw, stop.slot));
+  saveState();
+  await recalculate([], { fromStart: notStarted(tour) });
+}
+
+// « Prioritaire » activé ou retiré sur une intervention du parcours : même
+// principe, l'ordre est recalculé tout de suite et la ligne de la liste suit.
+async function togglePriority(id) {
+  const tour = state.tour;
+  const stop = tour.stops.find((s) => s.id === id);
+  stop.priority = !stop.priority;
+  rewriteLine(stop, withPriority(stop.raw, stop.priority));
+  saveState();
+  await recalculate([], { fromStart: notStarted(tour) });
+}
+
+// Remplace la ligne d'une intervention dans la liste du jour.
+function rewriteLine(stop, raw) {
   state.draft = state.draft
     .split('\n')
     .map((line) => (line.trim() === stop.raw ? raw : line))
     .join('\n');
   stop.raw = raw;
-  saveState();
-  await recalculate([], { fromStart: notStarted(tour) });
 }
 
 const SLOT_LABEL = { M: 'Matin', AM: 'Après-midi' };
 
 // Réécrit une ligne de la liste avec « Matin | », « Après-midi | » ou « ? | » devant.
 function withSlot(raw, slot) {
-  const fields = raw.split(/\s*\|\s*/);
-  const rest = fields.length >= 2 && SLOT_FIELD.test(fields[0]) ? fields.slice(1) : [raw];
-  return [SLOT_LABEL[slot] ?? '?', ...rest].join(' | ');
+  const mark = raw.match(PRIORITY_MARK)?.[0] ?? '';
+  const text = raw.slice(mark.length);
+  const fields = text.split(/\s*\|\s*/);
+  const rest = fields.length >= 2 && SLOT_FIELD.test(fields[0]) ? fields.slice(1) : [text];
+  return mark + [SLOT_LABEL[slot] ?? '?', ...rest].join(' | ');
 }
+
+// Réécrit une ligne de la liste avec ou sans le « ! » des prioritaires.
+const withPriority = (raw, priority) => (priority ? '! ' : '') + raw.replace(PRIORITY_MARK, '');
 
 function renderInput() {
   const { home } = state.settings;
@@ -326,8 +350,10 @@ function renderInput() {
 }
 
 function updateCount() {
-  const n = parseList($('#list').value).length;
-  $('#list-count').textContent = plural(n, 'intervention');
+  const lines = parseList($('#list').value);
+  const priorities = lines.filter((line) => line.priority).length;
+  $('#list-count').textContent =
+    plural(lines.length, 'intervention') + (priorities ? `, dont ${plural(priorities, 'prioritaire')}` : '');
 }
 
 function onListInput() {
@@ -462,7 +488,8 @@ async function optimize() {
 function toStop(id, line, found) {
   const { raw, query, title, details, phone, slot } = line;
   const usable = Boolean(found) && !found.unknownCity;
-  const stop = { id, raw, query, title, details, phone, slot, found: usable, unknownCity: Boolean(found?.unknownCity) };
+  const priority = Boolean(line.priority);
+  const stop = { id, raw, query, title, details, phone, slot, priority, found: usable, unknownCity: Boolean(found?.unknownCity) };
   if (usable) {
     const doubt = doubtReason(line.query, found);
     Object.assign(stop, { label: found.label, lat: found.lat, lon: found.lon, doubtful: doubt !== '', doubt });
@@ -548,14 +575,26 @@ async function continueReview() {
 // ---------- Calcul de la tournée ----------
 
 // Ordre de la journée : matin, pause (à l'agence si Pierre y retourne), après-midi.
-// Chaque étape a un rang : 0 = matin, 1 = pause à l'agence, 2 = après-midi.
+// Dans chaque demi-journée, les interventions prioritaires passent d'abord.
+// Chaque étape a un rang : 0 = prioritaire du matin, 1 = matin, 2 = pause à
+// l'agence, 3 = prioritaire de l'après-midi, 4 = après-midi.
 // Revenir à un rang plus petit coûte « l'infini » : le meilleur ordre respecte
 // donc toujours la journée.
-const RANK = { M: 0, AM: 2 };
+const RANK = { M: 1, AM: 4 };
+const LUNCH_RANK = 2;
+const LAST_RANK = 4;
 const BACKWARDS = 1e6;
 const LUNCH_ID = -1;
 
 const isLunch = (stop) => stop.kind === 'lunch';
+
+// Rang d'une étape. `morning` ne sert qu'aux interventions sans « M » ni « AM » ;
+// si elles sont prioritaires, elles passent en tout premier.
+function rankOf(stop, morning) {
+  if (isLunch(stop)) return LUNCH_RANK;
+  const half = RANK[stop.slot] ?? (morning || stop.priority ? RANK.M : RANK.AM);
+  return stop.priority ? half - 1 : half;
+}
 
 function lunchWindow(now = Date.now()) {
   const [hours, minutes] = state.settings.lunchStart.split(':').map(Number);
@@ -581,13 +620,13 @@ function bestOrder(durations, stops) {
   const n = stops.length;
   const all = stops.map((_, i) => i + 1);
   const slots = stops.map((stop) => stop.slot);
-  if (!stops.some(isLunch) && !(slots.includes('M') && slots.includes('AM'))) {
-    return optimizeOrder(durations, 0, n + 1, all);
-  }
-  // Interventions sans « M » / « AM » : le matin si on y arriverait avant la
-  // pause, l'après-midi sinon (d'après un premier ordre, sans la pause).
+  const constrained = stops.some((stop) => isLunch(stop) || stop.priority) || (slots.includes('M') && slots.includes('AM'));
+  if (!constrained) return optimizeOrder(durations, 0, n + 1, all);
+  // Interventions sans « M » / « AM » ni priorité : le matin si on y arriverait
+  // avant la pause, l'après-midi sinon (d'après un premier ordre, sans la pause).
   const real = all.filter((i) => !isLunch(stops[i - 1]));
-  const draft = optimizeOrder(penalize(durations, [0, ...stops.map((s) => RANK[s.slot] ?? null), 2]), 0, n + 1, real, 150);
+  const draftRanks = stops.map((stop) => (stop.slot || stop.priority ? rankOf(stop) : null));
+  const draft = optimizeOrder(penalize(durations, [0, ...draftRanks, LAST_RANK]), 0, n + 1, real, 150);
   const lunchFrom = lunchWindow().from;
   const onsite = state.settings.onsiteMinutes * 60 * 1000;
   const arrival = new Map();
@@ -599,8 +638,19 @@ function bestOrder(durations, stops) {
     time += onsite;
     previous = i;
   }
-  const ranks = stops.map((stop, k) => (isLunch(stop) ? 1 : RANK[stop.slot] ?? (arrival.get(k + 1) < lunchFrom ? 0 : 2)));
-  return optimizeOrder(penalize(durations, [0, ...ranks, 2]), 0, n + 1, all);
+  const ranks = stops.map((stop, k) => rankOf(stop, arrival.get(k + 1) < lunchFrom));
+  return optimizeOrder(penalize(durations, [0, ...ranks, LAST_RANK]), 0, n + 1, all);
+}
+
+// Ce que coûtent les interventions prioritaires dans l'ordre calculé : leur
+// nombre, et la route en plus (en secondes) par rapport au meilleur ordre sans
+// aucune priorité.
+function priorityToll(durations, stops, order) {
+  const count = stops.filter((stop) => stop.priority).length;
+  if (!count) return { count, cost: 0 };
+  const pathOf = (path) => [0, ...path, stops.length + 1];
+  const free = bestOrder(durations, stops.map((stop) => ({ ...stop, priority: false })));
+  return { count, cost: Math.max(0, pathCost(durations, pathOf(order)) - pathCost(durations, pathOf(free))) };
 }
 
 function penalize(durations, ranks) {
@@ -672,6 +722,7 @@ async function computeTour() {
       distance: legs.reduce((sum, leg) => sum + leg.distance, 0),
     },
     saved,
+    priorities: priorityToll(matrix.durations, stops, best),
     line: route?.line ?? null,
     estimated: matrix.source !== 'osrm',
   };
@@ -686,6 +737,9 @@ function renderTour() {
   const tour = state.tour;
   const nextId = tour.stops.find((stop) => statusOf(stop) === 'todo')?.id;
   const { saved } = tour;
+  // rappel du dernier calcul, tant qu'il reste une intervention prioritaire à faire
+  const { count: priorities = 0, cost: detour = 0 } = tour.priorities ?? {};
+  const priorityLeft = tour.stops.some((stop) => stop.priority && statusOf(stop) === 'todo');
 
   $('#tour-summary').innerHTML = `
     <div class="stats">
@@ -694,6 +748,7 @@ function renderTour() {
       <div><b>${fmtDistance(tour.total.distance)}</b><span>au total</span></div>
     </div>
     ${saved.duration >= 60 ? `<p class="gain"><b>${fmtDuration(saved.duration)}</b><span>de route en moins par rapport à l'ordre de la liste${saved.distance >= 1000 ? ` (${fmtDistance(saved.distance)} de moins)` : ''}</span></p>` : ''}
+    ${priorities && priorityLeft ? `<p class="priority-note">★ ${plural(priorities, 'prioritaire')} en premier${detour >= 60 ? ` · ${fmtDuration(detour)} de route en plus` : ''}</p>` : ''}
     ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}`;
 
   let number = 0;
@@ -745,6 +800,7 @@ function renderTour() {
             ${status === 'absent' ? '<span class="badge absent">Client absent</span>' : ''}
             ${stop.added ? '<span class="badge added">Ajoutée</span>' : ''}
             ${slotControl(stop, status)}
+            ${priorityControl(stop, status)}
             <p class="title">${esc(stop.title ?? stop.raw)}</p>
             ${sameText(stop.title ?? stop.raw, stop.label) ? '' : `<p class="sub">${esc(stop.label)}</p>`}
             ${stop.details ? `<p class="details">${esc(detailsWithoutPhone(stop.details))}</p>` : ''}
@@ -761,6 +817,10 @@ function renderTour() {
     return `<select class="slot-select${stop.slot ? '' : ' unset'}" data-slot aria-label="Matin ou après-midi">
       ${option('', 'Matin ou après-midi ?')}${option('M', 'Matin')}${option('AM', 'Après-midi')}
     </select>`;
+  };
+  const priorityControl = (stop, status) => {
+    if (status !== 'todo') return stop.priority ? '<span class="badge priority">★ Prioritaire</span>' : '';
+    return `<button class="priority-toggle" data-priority type="button" aria-pressed="${Boolean(stop.priority)}">${stop.priority ? '★' : '☆'} Prioritaire</button>`;
   };
   const endpoint = (letter, title, place) => `
     <div class="stop-card endpoint">
@@ -794,6 +854,8 @@ const detailsWithoutPhone = (details) =>
     .trim();
 
 function onTourClick(event) {
+  const star = event.target.closest('button[data-priority]');
+  if (star) return togglePriority(Number(star.closest('[data-id]').dataset.id));
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const id = Number(button.closest('[data-id]').dataset.id);
@@ -944,6 +1006,7 @@ async function recalculate(added = [], { fromStart = false } = {}) {
       distance: allLegs.reduce((sum, leg) => sum + leg.distance, 0),
     };
     tour.from = fromStart ? undefined : from;
+    tour.priorities = priorityToll(matrix.durations, todo, order);
     tour.line = route?.line ?? null;
     tour.estimated = matrix.source !== 'osrm';
     tour.version = (tour.version ?? 0) + 1; // pour recadrer la carte
@@ -965,7 +1028,8 @@ async function addStop(event) {
   event.preventDefault();
   const raw = $('#add-address').value.trim();
   if (!raw) return toast('Indique l’adresse de la nouvelle intervention.');
-  const query = parseList(raw)[0]?.query ?? raw;
+  const line = parseList(raw)[0];
+  const query = line?.query ?? raw;
   busy('Recherche de l’adresse…');
   let found;
   try {
@@ -981,11 +1045,14 @@ async function addStop(event) {
   if (doubt && !confirm(`Adresse trouvée : « ${found.label} » (${doubt}).\n\nC'est bien ça ?`)) return;
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
   const slot = $('#add-slot').value || null;
-  const stop = { id, raw, query, slot, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
+  const priority = $('#add-priority').checked || Boolean(line?.priority);
+  const title = line?.title ?? raw;
+  const stop = { id, raw, query, title, slot, priority, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
   if (history.state?.overlay === 'add') goBack();
   else $('#add-form').hidden = true;
   $('#add-address').value = '';
   $('#add-slot').value = '';
+  $('#add-priority').checked = false;
   await recalculate([stop]);
 }
 
@@ -1021,7 +1088,8 @@ function drawMap(tour, nextId) {
   let number = 0;
   for (const stop of tour.stops) {
     const label = isLunch(stop) ? 'P' : ++number;
-    const kind = statusOf(stop) !== 'todo' ? 'done' : stop.id === nextId ? 'next' : isLunch(stop) ? 'endpoint' : '';
+    const kind =
+      statusOf(stop) !== 'todo' ? 'done' : stop.id === nextId ? 'next' : isLunch(stop) ? 'endpoint' : stop.priority ? 'priority' : '';
     L.marker([stop.lat, stop.lon], { icon: pin(label, kind), zIndexOffset: stop.id === nextId ? 1000 : 0 })
       .bindPopup(`<b>${label}.</b> ${esc(stop.title ?? stop.raw)}`)
       .addTo(mapLayer);

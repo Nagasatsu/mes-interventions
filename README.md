@@ -10,7 +10,10 @@ interventions de la journée, pour faire le moins de route possible.
 2. L'appli trouve chaque adresse et signale celles qui sont douteuses.
 3. Elle calcule l'ordre qui minimise le temps de trajet : départ du travail
    (ou du domicile), retour au domicile, rendez-vous du matin (« M ») avant
-   ceux de l'après-midi (« AM »).
+   ceux de l'après-midi (« AM »). Une intervention marquée « ★ Prioritaire »
+   (bouton sur sa carte, case dans « + Ajouter », ou « ! » au début de sa
+   ligne) passe en premier dans sa demi-journée ; l'appli indique la route
+   que cela ajoute.
 4. Elle affiche le parcours sur une carte, avec un bouton Waze / Google Maps
    par intervention, et des boutons « Fait » / « Absent » (client pas là)
    pour suivre l'avancement.

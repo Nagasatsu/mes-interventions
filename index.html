@@ -98,6 +98,7 @@
         <textarea id="list" rows="10" placeholder="Prends la feuille en photo, ou écris une intervention par ligne, par exemple :&#10;12 rue de la Paix 62300 Lens&#10;Matin | 4 rue Jean Jaurès Liévin"></textarea>
       </label>
       <p id="list-count" class="hint"></p>
+      <p class="hint photo-hint">Intervention prioritaire : mets un « ! » au début de sa ligne, ou touche « ☆ Prioritaire » sur l'intervention une fois le tri fait.</p>
       <div class="agency-toggle">
         <span>Pause déjeuner à l'agence<small class="agency-note"></small></span>
         <div class="segmented" role="group" aria-label="Pause déjeuner à l'agence">
@@ -148,6 +149,7 @@
             <option value="AM">Après-midi</option>
           </select>
         </label>
+        <label class="choice"><input id="add-priority" type="checkbox"> Prioritaire (à faire en premier)</label>
         <div class="row">
           <button class="btn primary" type="submit">Ajouter et recalculer</button>
           <button id="cancel-add" class="btn" type="button">Annuler</button>
