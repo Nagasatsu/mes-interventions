@@ -46,6 +46,7 @@ puis ouvrir http://localhost:8000
 | `js/api.js` | recherche d'adresses et temps de trajet (services en ligne) |
 | `js/solver.js` | calcul du meilleur ordre de passage |
 | `js/sheet.js` | lecture de la photo de la feuille (colonnes, lignes, M / AM) |
+| `js/pages.js` | copies des pages scannées gardées sur le téléphone (« Voir la feuille scannée ») |
 | `js/address.js` | règles communes pour nettoyer les adresses (APPT, IND, téléphones…) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | installation sur le téléphone et mode hors-ligne |
 

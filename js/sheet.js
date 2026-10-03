@@ -14,6 +14,7 @@ import { STREET_WORD, PHONE, cleanStreet } from './address.js';
 
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
 const LONG_SIDE = 3200; // taille de travail : assez grand pour les petits caractères
+const COPY_LONG_SIDE = 2200; // copie gardée pour relecture : lisible, mais légère
 const ANGLE_KEY = 'mes-interventions-angle';
 
 const DATE = /\d{1,2}\/\d{2}\/\d{4}/;
@@ -48,7 +49,8 @@ function getWorker() {
 }
 
 // Lit une photo de la liste. `onProgress(texte)` reçoit l'avancement.
-// Renvoie la liste des interventions trouvées sur la page.
+// Renvoie les interventions trouvées sur la page (`rows`) et une copie de la
+// page remise à l'endroit (`copy`, image JPEG) pour pouvoir la revoir.
 export async function readSheetPhoto(file, onProgress = () => {}) {
   onLog = (message) => {
     if (message.status === 'recognizing text') onProgress(`Lecture du texte… ${Math.round(message.progress * 100)} %`);
@@ -87,28 +89,40 @@ export async function readSheetPhoto(file, onProgress = () => {}) {
   onProgress('Lecture des « M » / « AM »…');
   await readMissingSlots(worker, best.canvas, sheet);
   onLog = null;
-  return sheet.rows;
+  return { rows: sheet.rows, copy: await readableCopy(bitmap, best.angle) };
 }
 
-// Tourne et agrandit la photo, puis la passe en noir et blanc avec un seuil
-// local, pour effacer les ombres.
-function prepareImage(bitmap, angle) {
+// Dessine la photo tournée de `angle` degrés, avec son grand côté à `longSide`
+// pixels (jamais agrandie si `enlarge` est faux).
+function rotatedCanvas(bitmap, angle, longSide, enlarge) {
   const sideways = angle % 180 !== 0;
   const width0 = sideways ? bitmap.height : bitmap.width;
   const height0 = sideways ? bitmap.width : bitmap.height;
-  const scale = LONG_SIDE / Math.max(width0, height0);
-  const width = Math.round(width0 * scale);
-  const height = Math.round(height0 * scale);
+  const ratio = longSide / Math.max(width0, height0);
+  const scale = enlarge ? ratio : Math.min(1, ratio);
   const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = Math.round(width0 * scale);
+  canvas.height = Math.round(height0 * scale);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.translate(width / 2, height / 2);
+  ctx.translate(canvas.width / 2, canvas.height / 2);
   ctx.rotate((angle * Math.PI) / 180);
   ctx.drawImage(bitmap, (-bitmap.width * scale) / 2, (-bitmap.height * scale) / 2, bitmap.width * scale, bitmap.height * scale);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  adaptiveThreshold(ctx, width, height, Math.round(LONG_SIDE / 160));
   return canvas;
+}
+
+// Pour la lecture : photo agrandie, puis passée en noir et blanc avec un seuil
+// local, pour effacer les ombres.
+function prepareImage(bitmap, angle) {
+  const canvas = rotatedCanvas(bitmap, angle, LONG_SIDE, true);
+  adaptiveThreshold(canvas.getContext('2d'), canvas.width, canvas.height, Math.round(LONG_SIDE / 160));
+  return canvas;
+}
+
+// Pour la relecture par Pierre : la page à l'endroit, en couleurs, allégée.
+function readableCopy(bitmap, angle) {
+  const canvas = rotatedCanvas(bitmap, angle, COPY_LONG_SIDE, false);
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
 }
 
 // Un pixel devient noir s'il est nettement plus sombre que la moyenne de son voisinage.

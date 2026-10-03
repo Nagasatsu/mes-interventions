@@ -74,7 +74,7 @@
         <button class="btn primary big" type="submit">Enregistrer</button>
         <button id="close-settings" class="btn" type="button">Annuler</button>
       </form>
-      <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet, avec ta position GPS quand tu recalcules depuis ta position). Les photos de la liste sont lues sur le téléphone et ne sont envoyées nulle part ; seules les adresses partent à la recherche. Rien n'est enregistré ailleurs que sur ce téléphone.</p>
+      <p class="hint small">Les adresses sont envoyées à la Géoplateforme de l'IGN (recherche d'adresses) et à OSRM / OpenStreetMap (temps de trajet, avec ta position GPS quand tu recalcules depuis ta position). Les photos de la liste sont lues sur le téléphone et ne sont envoyées nulle part ; seules les adresses partent à la recherche. Une copie des pages scannées reste sur ce téléphone jusqu'à ce que tu effaces la liste. Rien n'est enregistré ailleurs que sur ce téléphone.</p>
     </section>
 
     <!-- Saisie de la liste du jour -->
@@ -86,6 +86,7 @@
       </button>
       <input id="scan-input" type="file" accept="image/*" capture="environment" hidden>
       <button id="pick-photos" class="btn link" type="button">ou choisir des photos déjà prises</button>
+      <button class="btn view-pages" type="button" hidden>Voir la feuille scannée</button>
       <input id="photo-input" type="file" accept="image/*" multiple hidden>
       <p class="hint photo-hint">L'appareil photo s'ouvre directement. Une page à la fois, feuille bien à plat, toute visible, sans ombre. Les interventions lues s'ajoutent à la liste ci-dessous.</p>
       <label class="field">
@@ -132,6 +133,7 @@
         <button id="recalc" class="btn" type="button">Recalculer d’ici</button>
         <button id="show-add" class="btn" type="button">+ Ajouter</button>
       </div>
+      <button class="btn view-pages" type="button" hidden>Voir la feuille scannée</button>
       <form id="add-form" class="card add-form" hidden>
         <label class="field">
           <span>Nouvelle intervention</span>
@@ -176,6 +178,16 @@
       <button id="reset-stats" class="btn link danger" type="button">Effacer toutes les statistiques</button>
     </section>
   </main>
+
+  <!-- Pages scannées, pour revérifier la feuille -->
+  <div id="viewer" class="viewer" hidden>
+    <div class="viewer-bar">
+      <strong>Feuille scannée</strong>
+      <button id="close-viewer" class="btn" type="button">Fermer</button>
+    </div>
+    <p class="hint">Touche une page pour l'agrandir.</p>
+    <div id="viewer-pages"></div>
+  </div>
 
   <div id="busy" class="busy" hidden>
     <div class="spinner"></div>

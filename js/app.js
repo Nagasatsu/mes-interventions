@@ -2,6 +2,7 @@ import { geocode, geocodeAll, travelMatrix, routeLine } from './api.js';
 import { optimizeOrder, pathCost } from './solver.js';
 import { STREET_WORD, PHONE, cleanStreet, formatPhone } from './address.js';
 import { readSheetPhoto } from './sheet.js';
+import { savePage, listPages, countPages, clearPages, removeOldPages } from './pages.js';
 
 const STORE_KEY = 'ma-tournee-v1';
 const LOW_SCORE = 0.45; // en dessous, l'adresse trouvée n'est peut-être pas la bonne
@@ -312,7 +313,8 @@ async function importPhotos(files) {
     for (const [i, file] of [...files].entries()) {
       const page = files.length > 1 ? `Photo ${i + 1}/${files.length} · ` : '';
       busy(`${page}Lecture de la photo…`);
-      const rows = await readSheetPhoto(file, (text) => busy(page + text));
+      const { rows, copy } = await readSheetPhoto(file, (text) => busy(page + text));
+      const addedBefore = added;
       for (const row of rows) {
         const list = $('#list').value;
         if ((row.ref && list.includes(row.ref)) || list.includes(row.address)) {
@@ -323,6 +325,9 @@ async function importPhotos(files) {
         added++;
         if (!row.slot) unknownSlot++;
       }
+      // Copie de la page gardée sur le téléphone, pour revérifier en cas
+      // d'erreur de lecture (pas pour une page déjà scannée, qui n'apporte rien).
+      if (added > addedBefore && copy) await savePage(copy).catch(() => {});
     }
     onListInput();
     if (!added && !already) {
@@ -340,7 +345,40 @@ async function importPhotos(files) {
     idle();
     $('#photo-input').value = '';
     $('#scan-input').value = '';
+    updatePagesButtons();
   }
+}
+
+// ---------- Feuille scannée : relecture des pages gardées sur le téléphone ----------
+
+let viewerUrls = [];
+
+async function updatePagesButtons() {
+  const count = await countPages().catch(() => 0);
+  for (const button of document.querySelectorAll('.view-pages')) {
+    button.hidden = !count;
+    button.textContent = `Voir la feuille scannée (${plural(count, 'page')})`;
+  }
+}
+
+async function openViewer() {
+  const pages = await listPages().catch(() => []);
+  if (!pages.length) return toast('Aucune page scannée à afficher.');
+  viewerUrls = pages.map((page) => URL.createObjectURL(page.blob));
+  $('#viewer-pages').innerHTML = pages
+    .map((page, i) => {
+      const time = new Date(page.addedAt).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      return `<figure><figcaption>Page ${i + 1} · scannée ${esc(time)}</figcaption><img src="${viewerUrls[i]}" alt="Page scannée ${i + 1}"></figure>`;
+    })
+    .join('');
+  $('#viewer').hidden = false;
+}
+
+function closeViewer() {
+  $('#viewer').hidden = true;
+  $('#viewer-pages').innerHTML = '';
+  for (const url of viewerUrls) URL.revokeObjectURL(url);
+  viewerUrls = [];
 }
 
 function sheetLine(row) {
@@ -1269,7 +1307,20 @@ function init() {
   $('#scan-input').addEventListener('change', (event) => importPhotos(event.target.files));
   $('#pick-photos').addEventListener('click', () => $('#photo-input').click());
   $('#photo-input').addEventListener('change', (event) => importPhotos(event.target.files));
+  for (const button of document.querySelectorAll('.view-pages')) button.addEventListener('click', openViewer);
+  $('#close-viewer').addEventListener('click', closeViewer);
+  $('#viewer-pages').addEventListener('click', (event) => {
+    if (event.target.matches('img')) event.target.classList.toggle('zoomed');
+  });
+  removeOldPages()
+    .catch(() => {})
+    .then(updatePagesButtons);
+
   $('#clear-list').addEventListener('click', () => {
+    // nouvelle liste : les pages scannées de l'ancienne ne servent plus
+    clearPages()
+      .catch(() => {})
+      .then(updatePagesButtons);
     $('#list').value = '';
     onListInput();
     $('#list').focus();
