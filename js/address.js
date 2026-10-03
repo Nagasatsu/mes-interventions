@@ -13,8 +13,11 @@ export const formatPhone = (digits) => digits.replace(/\D/g, '').replace(/(\d{2}
 // Retire ce qui gêne la recherche d'adresse :
 // « APPT 17 » (numéro d'appartement, pas de rue), la lettre de bâtiment devant
 // (« D APPT 17 »), « IND », « BAT C », « ESC 2 », « ETAGE 3 »…
+// Corrige aussi le zéro lu à la place d'un O au milieu d'un mot (« MERIC0URT »),
+// faute classique de la lecture de photo.
 export function cleanStreet(text) {
   return text
+    .replace(/(?<=\p{L}{2})0(?=\p{L}{2})/gu, 'O')
     .replace(/(^|\s)(?:[A-Z]\s*'?\s*)?APP?T\.?\s*(?:N°|NO)?\s*\d+[A-Z]?(?=\s|$)/gi, ' ')
     .replace(/(^|\s)IND(?=\s|$)/gi, ' ')
     .replace(/(^|\s)(?:BAT|BATIMENT|BÂTIMENT|ESC|ESCALIER|ETG|ETAGE|ÉTAGE|PORTE)\.?\s*\S+/gi, ' ')
@@ -47,6 +50,22 @@ const ABBREVIATIONS = { gal: 'general', gen: 'general', mal: 'marechal', pdt: 'p
 export const words = (text) =>
   text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
 
+// Mots qui identifient une rue ou une ville : sans les mots passe-partout
+// (« rue de la… ») ni les numéros, abréviations développées.
+export const nameWords = (text) =>
+  words(text ?? '')
+    .map((w) => ABBREVIATIONS[w] ?? w)
+    .filter((w) => !GENERIC_WORDS.has(w) && !/^\d+$/.test(w));
+
+// Mots du nom de rue demandé : ceux de la demande, sans la ville écrite à la fin.
+export function askedStreet(query, city) {
+  const asked = nameWords(query);
+  const cityWords = nameWords(city);
+  let end = asked.length;
+  for (let n = 0; n < cityWords.length && end > 0 && cityWords.includes(asked[end - 1]); n++) end--;
+  return asked.slice(0, end);
+}
+
 // Type de voie, abréviations comprises : « rue », « avenue », « place »…
 const STREET_TYPES = {
   rue: 'rue', avenue: 'avenue', av: 'avenue', boulevard: 'boulevard', bd: 'boulevard', place: 'place', pl: 'place',
@@ -65,12 +84,11 @@ export const streetType = (text) => words(text).map((w) => STREET_TYPES[w]).find
 // parfois dans une autre ville. Ces trois vérifications servent à le repérer.
 export function compare(query, found) {
   const asked = new Set(words(query).map((w) => ABBREVIATIONS[w] ?? w));
-  const important = (text) => words(text ?? '').filter((w) => !GENERIC_WORDS.has(w) && !/^\d+$/.test(w));
-  const cityWords = important(found.city);
+  const cityWords = nameWords(found.city);
   const askedType = streetType(query);
   const foundType = streetType(found.street ?? '');
   return {
-    street: important(found.street).every((w) => asked.has(w)),
+    street: nameWords(found.street).every((w) => asked.has(w)),
     city: Boolean(found.postcode && query.includes(found.postcode)) || (cityWords.length > 0 && cityWords.every((w) => asked.has(w))),
     type: !askedType || !foundType || askedType === foundType,
   };

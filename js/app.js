@@ -1,6 +1,6 @@
 import { geocode, geocodeAll, travelMatrix, routeLine } from './api.js';
 import { optimizeOrder, pathCost } from './solver.js';
-import { STREET_WORD, PHONE, cleanStreet, formatPhone, compare, streetType } from './address.js';
+import { STREET_WORD, PHONE, cleanStreet, cityLast, formatPhone, compare, streetType } from './address.js';
 import { readSheetPhoto } from './sheet.js';
 import { savePage, listPages, countPages, clearPages, removeOldPages } from './pages.js';
 
@@ -14,6 +14,7 @@ function doubtReason(query, found) {
   if (found.type === 'municipality') return 'seule la ville a été trouvée, pas la rue';
   const same = compare(query, found);
   if (!same.city) return 'la ville trouvée n’est pas écrite dans l’adresse';
+  if (found.unique) return ''; // seule rue de ce nom dans la ville : pas de doute (voir geocode)
   if (!same.type) return `« ${streetType(found.street)} » au lieu de « ${streetType(query)} »`;
   if (!same.street) return 'le nom de la rue est différent';
   if (found.score < LOW_SCORE) return 'ressemblance faible';
@@ -493,6 +494,7 @@ function toStop(id, line, found) {
   if (usable) {
     const doubt = doubtReason(line.query, found);
     Object.assign(stop, { label: found.label, lat: found.lat, lon: found.lon, doubtful: doubt !== '', doubt });
+    if (doubt && found.alternatives?.length) stop.alternatives = found.alternatives; // autres rues possibles, à proposer
   }
   return stop;
 }
@@ -504,10 +506,17 @@ const needsCheck = (stop) => !stop.found || stop.doubtful;
 function renderReview() {
   const items = state.pending.filter((stop) => stop.reviewing);
   const okCount = state.pending.length - items.length;
+  const unsure = items.some((stop) => stop.found && stop.doubtful);
+  const missing = items.some((stop) => !stop.found);
   $('#review-intro').textContent =
-    `${plural(okCount, 'adresse trouvée', 'adresses trouvées')} sans souci. ` +
-    'Pour les autres, corrige le texte puis « Chercher », ou retire-les.';
-  // une adresse introuvable (ou dont la ville n'est pas reconnue) bloque la suite
+    `${plural(okCount, 'adresse trouvée', 'adresses trouvées')} sans souci.` +
+    (unsure ? ' En orange : regarde l’adresse trouvée. Si c’est la bonne, il n’y a rien à réécrire.' : '') +
+    (missing ? ' En rouge : corrige le texte puis « Chercher », ou retire l’intervention.' : '') +
+    (items.length && !unsure && !missing ? ' Les autres sont vérifiées.' : '');
+  // Une adresse introuvable (ou dont la ville n'est pas reconnue) bloque la
+  // suite : il faut corriger le texte. Une adresse « pas sûre » se confirme
+  // d'un appui, ou se remplace par une autre rue proposée.
+  const removeButton = '<button class="btn danger" data-action="remove" type="button">Retirer</button>';
   $('#review-list').innerHTML = items
     .map((stop) => {
       const status = !stop.found ? 'bad' : needsCheck(stop) ? 'warn' : 'ok';
@@ -516,16 +525,31 @@ function renderReview() {
           ? UNKNOWN_CITY
           : 'Adresse introuvable'
         : `${status === 'warn' ? `Trouvé, mais pas sûr (${esc(stop.doubt)})` : 'Trouvé'} : <b>${esc(stop.label)}</b>`;
+      const editor = `
+          <input type="text" value="${esc(stop.query)}" aria-label="Adresse à chercher" enterkeyhint="search">
+          <div class="row">
+            <button class="btn" data-action="search" type="button">Chercher</button>
+            ${status === 'warn' ? '' : removeButton}
+          </div>`;
+      const alternatives = (status === 'warn' && stop.alternatives) || [];
+      const choices = alternatives.length
+        ? `<p class="hint alts-title">Ou une autre rue de ${esc(alternatives[0].city)} :</p>
+          <div class="alts">
+            ${alternatives.map((alt, i) => `<button class="btn" data-action="pick" data-alt="${i}" type="button">${esc(alt.street)}</button>`).join('')}
+          </div>`
+        : '';
+      const confirm = `
+          <div class="row">
+            <button class="btn success" data-action="confirm" type="button">C’est la bonne ✓</button>
+            ${removeButton}
+          </div>`;
       return `
         <li class="card ${status}" data-id="${stop.id}">
           <p class="raw">${esc(stop.title ?? stop.raw)}</p>
           ${stop.details ? `<p class="hint">${esc(stop.details)}</p>` : ''}
           <p class="result">${result}</p>
-          <input type="text" value="${esc(stop.query)}" aria-label="Adresse à chercher" enterkeyhint="search">
-          <div class="row">
-            <button class="btn" data-action="search" type="button">Chercher</button>
-            <button class="btn danger" data-action="remove" type="button">Retirer</button>
-          </div>
+          ${status === 'bad' ? editor : `${status === 'warn' ? confirm + choices : ''}
+          <details class="fix"><summary>${status === 'warn' ? 'Corriger à la main' : 'Modifier'}</summary>${editor}</details>`}
         </li>`;
     })
     .join('');
@@ -541,10 +565,14 @@ async function onReviewClick(event) {
   const item = button.closest('[data-id]');
   const index = state.pending.findIndex((stop) => stop.id === Number(item.dataset.id));
   const stop = state.pending[index];
-  if (button.dataset.action === 'remove') {
+  const { action } = button.dataset;
+  if (action === 'remove') {
     state.pending.splice(index, 1);
+  } else if (action === 'confirm') {
+    stop.doubtful = false; // l'adresse trouvée est la bonne : rien à réécrire
   } else {
-    const query = item.querySelector('input').value.trim();
+    const picked = action === 'pick' && stop.alternatives[Number(button.dataset.alt)];
+    const query = picked ? pickedQuery(stop, picked) : item.querySelector('input').value.trim();
     busy('Recherche…');
     try {
       const found = await geocode(query, startPlace());
@@ -559,6 +587,13 @@ async function onReviewClick(event) {
   }
   saveState();
   renderReview();
+}
+
+// Adresse à chercher quand on choisit une autre rue proposée : le même numéro,
+// dans la rue choisie (qui est toujours dans la ville écrite).
+function pickedQuery(stop, alt) {
+  const number = cityLast(stop.query).match(/^\d+(?:\s?(?:bis|ter))?(?=\s)/i)?.[0] ?? '';
+  return `${number} ${alt.street} ${alt.postcode} ${alt.city}`.trim();
 }
 
 async function continueReview() {
@@ -715,7 +750,7 @@ async function computeTour() {
     day: today,
     start,
     end,
-    stops: ordered.map(({ reviewing, ...stop }, k) => ({ ...stop, leg: legs[k], status: 'todo' })),
+    stops: ordered.map(({ reviewing, alternatives, ...stop }, k) => ({ ...stop, leg: legs[k], status: 'todo' })),
     back: legs[n],
     total: {
       duration: legs.reduce((sum, leg) => sum + leg.duration, 0),

@@ -344,6 +344,37 @@ textarea:focus {
   margin: 0;
 }
 
+/* autres rues proposées : un appui pour choisir */
+.card .alts-title {
+  margin: 12px 0 6px;
+  font-size: 14px;
+}
+
+.alts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alts .btn {
+  width: auto;
+  font-size: 14px;
+  text-align: left;
+}
+
+/* correction à la main, repliée tant qu'on n'en a pas besoin */
+.fix summary {
+  padding: 12px 0 4px;
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fix[open] summary {
+  padding-bottom: 8px;
+}
+
 /* ---------- Tournée ---------- */
 
 .stats {

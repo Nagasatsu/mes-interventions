@@ -3,19 +3,23 @@
 // - OSRM (basé sur OpenStreetMap) : temps de trajet en voiture entre les points
 // Si OSRM ne répond pas, on se rabat sur une estimation à vol d'oiseau.
 
-import { cityLast, compare, words } from './address.js';
+import { askedStreet, cityLast, compare, nameWords, words } from './address.js';
 
 const GEOCODE_URL = 'https://data.geopf.fr/geocodage/search';
 const OSRM_URL = 'https://router.project-osrm.org';
 const GEOCODE_PARALLEL = 5;
 const CANDIDATES = 8; // on regarde plusieurs résultats, pas seulement le premier
+const STREETS = 10; // rues de la ville comparées quand le nom de rue ne correspond pas exactement
+const ALTERNATIVES = 3; // autres rues proposées quand il y a un doute
 
 // Adresse → coordonnées.
 //
 // Règle de sécurité : la ville écrite dans l'adresse fait foi (sur la feuille,
 // elle vient de la base de données de l'entreprise). On ne renvoie donc JAMAIS
 // une adresse située dans une autre ville. Résultats possibles :
-// - l'adresse trouvée, dans la ville (ou le code postal) écrite ;
+// - l'adresse trouvée, dans la ville (ou le code postal) écrite, avec parfois
+//   `unique` (seule rue de ce nom dans la ville) ou `alternatives` (autres
+//   rues possibles de la même ville) ;
 // - null : rien trouvé ;
 // - { unknownCity: true } : aucune ville reconnue dans le texte, on ne devine pas.
 //
@@ -23,9 +27,17 @@ const CANDIDATES = 8; // on regarde plusieurs résultats, pas seulement le premi
 // « 12 rue Jean Jaurès Denain » il met en premier « 12 Rue Jean Jaurès à
 // Fenain » (nom proche) avant « 12 Avenue Jean Jaurès à Denain ». On choisit
 // donc nous-mêmes parmi plusieurs résultats, en exigeant la bonne ville.
+//
+// Dans la bonne ville, le nom de rue trouvé peut différer de celui écrit
+// (« RUE PASTEUR » → « Rue Louis Pasteur ») : voir checkStreet.
 export async function geocode(query, near) {
   const q = cityLast(query.replace(/^[^\p{L}\p{N}]+/u, '').replace(/\s+/g, ' ').trim()).slice(0, 200);
   if (q.length < 3) return null;
+  const found = await locate(q, near);
+  return found && !found.unknownCity ? checkStreet(q, found) : found;
+}
+
+async function locate(q, near) {
   const best = pickBest(q, await search({ q, limit: CANDIDATES }, near));
   if (!best) return null;
   if (compare(q, best).city) return best;
@@ -38,6 +50,43 @@ export async function geocode(query, near) {
   const inCity = pickBest(q, await search({ q, limit: CANDIDATES, ...(postcode ? { postcode } : { citycode }) }));
   if (!inCity) return null;
   return compare(q, inCity).city ? inCity : { unknownCity: true };
+}
+
+// Le nom de rue trouvé n'est pas exactement celui demandé : prénom en plus
+// (« Rue Louis Pasteur » pour « RUE PASTEUR »), autre type de voie
+// (« Avenue » pour « rue »)… On demande alors toutes les rues de cette ville
+// qui contiennent les mots demandés :
+// - une seule, celle trouvée : c'est forcément elle (unique: true), il n'y a
+//   plus de doute ;
+// - plusieurs (« Rue Curie » et « Impasse Curie ») ou aucune : le doute reste,
+//   avec les autres rues possibles (alternatives) à proposer.
+async function checkStreet(q, found) {
+  if (found.type === 'municipality') return found;
+  const same = compare(q, found);
+  if (same.street && same.type) return found;
+  const asked = askedStreet(q, found.city);
+  const text = asked.join(' ');
+  if (text.length < 3) return found;
+  let streets;
+  try {
+    streets = await search({ q: text, type: 'street', citycode: found.citycode, limit: STREETS });
+  } catch {
+    return found; // pas de réponse : on garde le doute
+  }
+  const key = (street) => words(street ?? '').join(' ');
+  const hasAskedWords = (street) => asked.every((word) => nameWords(street).includes(word));
+  const others = new Map(); // autres rues de la ville, une fois chacune
+  for (const street of streets) {
+    const name = key(street.street);
+    if (street.citycode === found.citycode && name !== key(found.street) && !others.has(name)) others.set(name, street);
+  }
+  const rivals = [...others.values()].filter((street) => hasAskedWords(street.street));
+  const confirmed = streets.some((street) => key(street.street) === key(found.street));
+  if (confirmed && hasAskedWords(found.street) && !rivals.length) return { ...found, unique: true };
+  const alternatives = [...rivals, ...[...others.values()].filter((street) => !rivals.includes(street))]
+    .slice(0, ALTERNATIVES)
+    .map(({ street, postcode, city }) => ({ street, postcode, city }));
+  return { ...found, alternatives };
 }
 
 async function search(params, near) {

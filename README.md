@@ -7,7 +7,11 @@ interventions de la journée, pour faire le moins de route possible.
    directement, une page à la fois ; on peut aussi choisir des photos déjà prises) :
    le téléphone lit la feuille lui-même (Tesseract), sans envoyer la photo.
    On peut aussi coller une liste, une intervention par ligne.
-2. L'appli trouve chaque adresse et signale celles qui sont douteuses.
+2. L'appli trouve chaque adresse, toujours dans la ville écrite. Un nom de rue
+   abrégé (« RUE PASTEUR » pour « Rue Louis Pasteur ») est complété
+   tout seul quand la ville n'a qu'une rue de ce nom. Les adresses qui restent
+   douteuses se confirment d'un appui (« C'est la bonne ✓ ») ou se remplacent
+   par une autre rue proposée, sans rien réécrire.
 3. Elle calcule l'ordre qui minimise le temps de trajet : départ du travail
    (ou du domicile), retour au domicile, rendez-vous du matin (« M ») avant
    ceux de l'après-midi (« AM »). Une intervention marquée « ★ Prioritaire »
