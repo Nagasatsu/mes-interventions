@@ -11,7 +11,7 @@
 // Numéro de version : à augmenter à CHAQUE mise en ligne. C'est ce changement
 // qui prévient les téléphones où l'appli est restée ouverte qu'il y a du
 // nouveau (ils rechargent alors tout seuls). Il s'affiche dans les Réglages.
-const CACHE = 'mes-interventions-v5';
+const CACHE = 'mes-interventions-v6';
 const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 const APP_FILES = [
   './',

@@ -522,14 +522,7 @@ const needsCheck = (stop) => !stop.found || stop.doubtful;
 
 function renderReview() {
   const items = state.pending.filter((stop) => stop.reviewing);
-  const okCount = state.pending.length - items.length;
   const unsure = items.some((stop) => stop.found && stop.doubtful);
-  const missing = items.some((stop) => !stop.found);
-  $('#review-intro').textContent =
-    `${plural(okCount, 'adresse trouvée', 'adresses trouvées')} sans souci.` +
-    (unsure ? ' En orange : regarde l’adresse trouvée ou corrigée. Si c’est la bonne, il n’y a rien à réécrire.' : '') +
-    (missing ? ' En rouge : corrige le texte puis « Chercher », ou retire l’intervention.' : '') +
-    (items.length && !unsure && !missing ? ' Les autres sont vérifiées.' : '');
   // Une adresse introuvable (ou dont la ville n'est pas reconnue) bloque la
   // suite : il faut corriger le texte. Une adresse « pas sûre » se confirme
   // d'un appui, ou se remplace par une autre rue proposée.
