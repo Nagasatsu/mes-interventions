@@ -1,6 +1,6 @@
 import { geocode, geocodeAll, travelMatrix, routeLine } from './api.js';
 import { optimizeOrder, pathCost } from './solver.js';
-import { STREET_WORD, PHONE, cleanStreet, formatPhone } from './address.js';
+import { STREET_WORD, PHONE, cleanStreet, formatPhone, compare, streetType } from './address.js';
 import { readSheetPhoto } from './sheet.js';
 import { savePage, listPages, countPages, clearPages, removeOldPages } from './pages.js';
 
@@ -8,42 +8,23 @@ const STORE_KEY = 'ma-tournee-v1';
 const LOW_SCORE = 0.45; // en dessous, l'adresse trouvée n'est peut-être pas la bonne
 const MAX_STOPS = 90; // limite du service de calcul de trajets
 
-// Mots qui ne permettent pas de reconnaître une rue (« Rue de la… »).
-const GENERIC_WORDS = new Set(
-  ('rue avenue boulevard place chemin allee impasse route quai cours square lotissement residence ' +
-    'chaussee voie hameau faubourg cite passage esplanade promenade clos domaine sentier rond point ' +
-    'de du des la le les l d et aux au en sur sous saint sainte st ste bis ter').split(' '),
-);
-const ABBREVIATIONS = { gal: 'general', gen: 'general', mal: 'marechal', pdt: 'president', cdt: 'commandant', dr: 'docteur', pr: 'professeur' };
-
-const words = (text) =>
-  text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
-
-// Le service d'adresses renvoie toujours quelque chose, même quand la rue
-// n'existe pas (il prend alors une rue voisine au nom proche). On vérifie donc
-// que les mots importants du nom de rue trouvé étaient bien dans la demande.
-// Type de voie, abréviations comprises : « rue », « avenue », « place »…
-const STREET_TYPES = {
-  rue: 'rue', avenue: 'avenue', av: 'avenue', boulevard: 'boulevard', bd: 'boulevard', place: 'place', pl: 'place',
-  chemin: 'chemin', che: 'chemin', allee: 'allee', impasse: 'impasse', imp: 'impasse', route: 'route', rte: 'route',
-  square: 'square', quai: 'quai', cours: 'cours', residence: 'residence', cite: 'cite', sentier: 'sentier',
-  passage: 'passage', hameau: 'hameau', faubourg: 'faubourg', clos: 'clos', domaine: 'domaine',
-};
-const streetType = (text) => words(text).map((w) => STREET_TYPES[w]).find(Boolean);
-
-function isDoubtful(query, found) {
-  if (found.score < LOW_SCORE || found.type === 'municipality') return true;
-  // « rue Jean Jaurès » demandée mais « place Jean Jaurès » trouvée : pas le même endroit
-  const askedType = streetType(query);
-  const foundType = streetType(found.street ?? '');
-  if (askedType && foundType && askedType !== foundType) return true;
-  const asked = new Set(words(query).map((w) => ABBREVIATIONS[w] ?? w));
-  // pas la bonne ville : « … LENS » demandé mais trouvé à Fouquières-lès-Lens
-  // (sauf si le code postal demandé est le bon)
-  const samePostcode = found.postcode && query.includes(found.postcode);
-  if (!samePostcode && words(found.city ?? '').some((w) => !GENERIC_WORDS.has(w) && !asked.has(w))) return true;
-  return words(found.street ?? '').some((w) => !GENERIC_WORDS.has(w) && !/^\d+$/.test(w) && !asked.has(w));
+// Pourquoi l'adresse trouvée est douteuse (texte affiché à l'utilisateur), ou
+// '' si tout correspond : ville, rue et type de voie demandés, et bonne note.
+function doubtReason(query, found) {
+  if (found.type === 'municipality') return 'seule la ville a été trouvée, pas la rue';
+  const same = compare(query, found);
+  if (!same.city) return 'la ville trouvée n’est pas écrite dans l’adresse';
+  if (!same.type) return `« ${streetType(found.street)} » au lieu de « ${streetType(query)} »`;
+  if (!same.street) return 'le nom de la rue est différent';
+  if (found.score < LOW_SCORE) return 'ressemblance faible';
+  return '';
 }
+
+const isDoubtful = (query, found) => doubtReason(query, found) !== '';
+
+// Une adresse dans une autre ville que celle écrite : l'erreur la plus grave
+// pour un parcours. Elle doit être confirmée explicitement.
+const isWrongCity = (query, found) => found.type !== 'municipality' && !compare(query, found).city;
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -416,7 +397,15 @@ function toStop(id, line, found) {
   const { raw, query, title, details, phone, slot } = line;
   const stop = { id, raw, query, title, details, phone, slot, found: Boolean(found) };
   if (found) {
-    Object.assign(stop, { label: found.label, lat: found.lat, lon: found.lon, doubtful: isDoubtful(line.query, found) });
+    const doubt = doubtReason(line.query, found);
+    Object.assign(stop, {
+      label: found.label,
+      lat: found.lat,
+      lon: found.lon,
+      doubtful: doubt !== '',
+      doubt,
+      wrongCity: isWrongCity(line.query, found),
+    });
   }
   return stop;
 }
@@ -431,12 +420,16 @@ function renderReview() {
   $('#review-intro').textContent =
     `${plural(okCount, 'adresse trouvée', 'adresses trouvées')} sans souci. ` +
     'Pour les autres, corrige le texte puis « Chercher », ou retire-les.';
+  // une adresse introuvable, ou trouvée dans une autre ville, bloque la suite
+  const mustFix = (stop) => !stop.found || (stop.wrongCity && !stop.kept);
   $('#review-list').innerHTML = items
     .map((stop) => {
-      const status = !stop.found ? 'bad' : needsCheck(stop) ? 'warn' : 'ok';
+      const status = mustFix(stop) ? 'bad' : needsCheck(stop) ? 'warn' : 'ok';
       const result = !stop.found
         ? 'Adresse introuvable'
-        : `${status === 'warn' ? 'Trouvé, mais pas sûr' : 'Trouvé'} : <b>${esc(stop.label)}</b>`;
+        : stop.wrongCity
+          ? `Attention, ${esc(stop.doubt)} : <b>${esc(stop.label)}</b>`
+          : `${status === 'warn' ? `Trouvé, mais pas sûr (${esc(stop.doubt)})` : 'Trouvé'} : <b>${esc(stop.label)}</b>`;
       return `
         <li class="card ${status}" data-id="${stop.id}">
           <p class="raw">${esc(stop.title ?? stop.raw)}</p>
@@ -447,13 +440,14 @@ function renderReview() {
             <button class="btn" data-action="search" type="button">Chercher</button>
             <button class="btn danger" data-action="remove" type="button">Retirer</button>
           </div>
+          ${stop.found && stop.wrongCity && !stop.kept ? '<button class="btn link" data-action="keep" type="button">C’est quand même la bonne adresse</button>' : ''}
         </li>`;
     })
     .join('');
-  const blocked = items.some((stop) => !stop.found);
+  const blocked = items.some(mustFix);
   const button = $('#review-continue');
   button.disabled = blocked || state.pending.length === 0;
-  button.textContent = blocked ? 'Corrige ou retire les adresses introuvables' : 'Calculer le meilleur ordre';
+  button.textContent = blocked ? 'Corrige ou retire les adresses en rouge' : 'Calculer le meilleur ordre';
 }
 
 async function onReviewClick(event) {
@@ -464,6 +458,8 @@ async function onReviewClick(event) {
   const stop = state.pending[index];
   if (button.dataset.action === 'remove') {
     state.pending.splice(index, 1);
+  } else if (button.dataset.action === 'keep') {
+    stop.kept = true;
   } else {
     const query = item.querySelector('input').value.trim();
     busy('Recherche…');
@@ -923,7 +919,11 @@ async function addStop(event) {
     idle();
   }
   if (!found) return toast('Adresse introuvable. Ajoute le code postal ou la ville.');
-  if (isDoubtful(query, found) && !confirm(`Adresse trouvée : « ${found.label} ». C'est bien ça ?`)) return;
+  const doubt = doubtReason(query, found);
+  const question = isWrongCity(query, found)
+    ? `ATTENTION : ${doubt}.\n\nAdresse trouvée : « ${found.label} ».\n\nL'ajouter quand même ?`
+    : `Adresse trouvée : « ${found.label} » (${doubt}).\n\nC'est bien ça ?`;
+  if (doubt && !confirm(question)) return;
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
   const slot = $('#add-slot').value || null;
   const stop = { id, raw, query, slot, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
