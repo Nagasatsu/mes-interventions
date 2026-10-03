@@ -1,6 +1,6 @@
 import { geocode, geocodeAll, travelMatrix, routeLine } from './api.js';
 import { optimizeOrder, pathCost } from './solver.js';
-import { STREET_WORD, PHONE, cleanStreet, cityLast, formatPhone, compare, streetType } from './address.js';
+import { STREET_WORD, PHONE, cleanStreet, cityLast, fixZeros, formatPhone, compare, streetType } from './address.js';
 import { readSheetPhoto } from './sheet.js';
 import { savePage, listPages, countPages, clearPages, removeOldPages } from './pages.js';
 
@@ -14,7 +14,7 @@ function doubtReason(query, found) {
   if (found.type === 'municipality') return 'seule la ville a été trouvée, pas la rue';
   const same = compare(query, found);
   if (!same.city) return 'la ville trouvée n’est pas écrite dans l’adresse';
-  if (found.unique) return ''; // seule rue de ce nom dans la ville : pas de doute (voir geocode)
+  if (found.unique) return ''; // seule rue de ce nom dans la ville (voir geocode) : c'est une correction, pas un doute
   if (!same.type) return `« ${streetType(found.street)} » au lieu de « ${streetType(query)} »`;
   if (!same.street) return 'le nom de la rue est différent';
   if (found.score < LOW_SCORE) return 'ressemblance faible';
@@ -22,6 +22,15 @@ function doubtReason(query, found) {
 }
 
 const isDoubtful = (query, found) => doubtReason(query, found) !== '';
+
+// Ce que l'appli a corrigé d'elle-même pour trouver l'adresse, ou ''. Une
+// correction n'est jamais appliquée en silence : elle est montrée, et se
+// valide d'un appui.
+function correctionNote(line, found) {
+  if (found.unique) return 'seule rue de ce nom dans la ville';
+  if (line.repaired) return '« 0 » lu à la place d’un « O »';
+  return '';
+}
 
 // La recherche d'adresse ne renvoie jamais une autre ville que celle écrite
 // (voir geocode). Quand elle ne reconnaît aucune ville, il faut corriger le texte.
@@ -238,12 +247,16 @@ function parseLine(raw) {
   const priority = PRIORITY_MARK.test(raw);
   const text = raw.replace(PRIORITY_MARK, '');
   const fields = text.split(/\s*\|\s*/);
-  if (fields.length >= 2 && SLOT_FIELD.test(fields[0])) {
+  const structured = fields.length >= 2 && SLOT_FIELD.test(fields[0]);
+  const address = structured ? fields[1] : extractAddress(text);
+  const query = cleanStreet(fixZeros(address));
+  const repaired = fixZeros(address) !== address; // correction à montrer (voir correctionNote)
+  if (structured) {
     const slot = /^(matin|m)$/i.test(fields[0]) ? 'M' : /^(apr|am)/i.test(fields[0]) ? 'AM' : null;
     const details = fields.slice(2).filter(Boolean).join(' · ');
-    return { raw, query: cleanStreet(fields[1]), title: fields[1], details, phone: firstPhone(details), slot, priority };
+    return { raw, query, title: fields[1], details, phone: firstPhone(details), slot, priority, repaired };
   }
-  return { raw, query: cleanStreet(extractAddress(text)), title: text, details: '', phone: firstPhone(text), slot: null, priority };
+  return { raw, query, title: text, details: '', phone: firstPhone(text), slot: null, priority, repaired };
 }
 
 function extractAddress(line) {
@@ -493,7 +506,9 @@ function toStop(id, line, found) {
   const stop = { id, raw, query, title, details, phone, slot, priority, found: usable, unknownCity: Boolean(found?.unknownCity) };
   if (usable) {
     const doubt = doubtReason(line.query, found);
-    Object.assign(stop, { label: found.label, lat: found.lat, lon: found.lon, doubtful: doubt !== '', doubt });
+    const corrected = doubt ? '' : correctionNote(line, found);
+    // « doubtful » : à montrer avant de calculer, que ce soit un doute ou une correction
+    Object.assign(stop, { label: found.label, lat: found.lat, lon: found.lon, doubtful: Boolean(doubt || corrected), doubt, corrected });
     if (doubt && found.alternatives?.length) stop.alternatives = found.alternatives; // autres rues possibles, à proposer
   }
   return stop;
@@ -510,7 +525,7 @@ function renderReview() {
   const missing = items.some((stop) => !stop.found);
   $('#review-intro').textContent =
     `${plural(okCount, 'adresse trouvée', 'adresses trouvées')} sans souci.` +
-    (unsure ? ' En orange : regarde l’adresse trouvée. Si c’est la bonne, il n’y a rien à réécrire.' : '') +
+    (unsure ? ' En orange : regarde l’adresse trouvée ou corrigée. Si c’est la bonne, il n’y a rien à réécrire.' : '') +
     (missing ? ' En rouge : corrige le texte puis « Chercher », ou retire l’intervention.' : '') +
     (items.length && !unsure && !missing ? ' Les autres sont vérifiées.' : '');
   // Une adresse introuvable (ou dont la ville n'est pas reconnue) bloque la
@@ -524,7 +539,7 @@ function renderReview() {
         ? stop.unknownCity
           ? UNKNOWN_CITY
           : 'Adresse introuvable'
-        : `${status === 'warn' ? `Trouvé, mais pas sûr (${esc(stop.doubt)})` : 'Trouvé'} : <b>${esc(stop.label)}</b>`;
+        : `${status !== 'warn' ? 'Trouvé' : stop.corrected ? `Corrigé automatiquement (${esc(stop.corrected)})` : `Trouvé, mais pas sûr (${esc(stop.doubt)})`} : <b>${esc(stop.label)}</b>`;
       const editor = `
           <input type="text" value="${esc(stop.query)}" aria-label="Adresse à chercher" enterkeyhint="search">
           <div class="row">
@@ -556,7 +571,7 @@ function renderReview() {
   const blocked = items.some((stop) => !stop.found);
   const button = $('#review-continue');
   button.disabled = blocked || state.pending.length === 0;
-  button.textContent = blocked ? 'Corrige ou retire les adresses en rouge' : 'Calculer le meilleur ordre';
+  button.textContent = blocked ? 'Corrige ou retire les adresses en rouge' : unsure ? 'Tout est bon, calculer le meilleur ordre' : 'Calculer le meilleur ordre';
 }
 
 async function onReviewClick(event) {
@@ -1076,7 +1091,7 @@ async function addStop(event) {
   }
   if (!found) return toast('Adresse introuvable. Vérifie la rue et la ville.');
   if (found.unknownCity) return toast('Ville non reconnue. Écris l’adresse avec sa ville, par exemple « 12 rue Jean Jaurès Denain ».');
-  const doubt = doubtReason(query, found);
+  const doubt = doubtReason(query, found) || correctionNote(line ?? {}, found);
   if (doubt && !confirm(`Adresse trouvée : « ${found.label} » (${doubt}).\n\nC'est bien ça ?`)) return;
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
   const slot = $('#add-slot').value || null;

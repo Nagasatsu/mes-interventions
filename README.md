@@ -9,9 +9,10 @@ interventions de la journée, pour faire le moins de route possible.
    On peut aussi coller une liste, une intervention par ligne.
 2. L'appli trouve chaque adresse, toujours dans la ville écrite. Un nom de rue
    abrégé (« RUE PASTEUR » pour « Rue Louis Pasteur ») est complété
-   tout seul quand la ville n'a qu'une rue de ce nom. Les adresses qui restent
-   douteuses se confirment d'un appui (« C'est la bonne ✓ ») ou se remplacent
-   par une autre rue proposée, sans rien réécrire.
+   quand la ville n'a qu'une rue de ce nom. Rien n'est changé en silence :
+   chaque correction et chaque adresse douteuse est montrée, et se confirme
+   d'un appui (« C'est la bonne ✓ ») ou se remplace par une autre rue
+   proposée, sans rien réécrire.
 3. Elle calcule l'ordre qui minimise le temps de trajet : départ du travail
    (ou du domicile), retour au domicile, rendez-vous du matin (« M ») avant
    ceux de l'après-midi (« AM »). Une intervention marquée « ★ Prioritaire »

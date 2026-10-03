@@ -13,17 +13,18 @@ export const formatPhone = (digits) => digits.replace(/\D/g, '').replace(/(\d{2}
 // Retire ce qui gêne la recherche d'adresse :
 // « APPT 17 » (numéro d'appartement, pas de rue), la lettre de bâtiment devant
 // (« D APPT 17 »), « IND », « BAT C », « ESC 2 », « ETAGE 3 »…
-// Corrige aussi le zéro lu à la place d'un O au milieu d'un mot (« MERIC0URT »),
-// faute classique de la lecture de photo.
 export function cleanStreet(text) {
   return text
-    .replace(/(?<=\p{L}{2})0(?=\p{L}{2})/gu, 'O')
     .replace(/(^|\s)(?:[A-Z]\s*'?\s*)?APP?T\.?\s*(?:N°|NO)?\s*\d+[A-Z]?(?=\s|$)/gi, ' ')
     .replace(/(^|\s)IND(?=\s|$)/gi, ' ')
     .replace(/(^|\s)(?:BAT|BATIMENT|BÂTIMENT|ESC|ESCALIER|ETG|ETAGE|ÉTAGE|PORTE)\.?\s*\S+/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+// Zéro lu à la place d'un O au milieu d'un mot (« MERIC0URT ») : faute
+// classique de la lecture de photo.
+export const fixZeros = (text) => text.replace(/(?<=\p{L}{2})0(?=\p{L}{2})/gu, 'O');
 
 // La ville écrite en premier (« Denain 12 rue Jean Jaurès ») est remise à la
 // fin : le service d'adresses s'y perd sinon et répond dans toute la France.
