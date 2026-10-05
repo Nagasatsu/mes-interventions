@@ -1172,16 +1172,74 @@ function enableDragging() {
     touchStartThreshold: 6,
     forceFallback: true,
     fallbackTolerance: 4,
-    animation: 150,
-    scrollSensitivity: 90,
-    scrollSpeed: 14,
+    animation: 120,
+    scroll: false, // défilement fait ici (startAutoScroll), plus régulier que celui de la bibliothèque
     onChoose: () => navigator.vibrate?.(20), // petit signal : la carte est attrapée
-    onStart: () => $('#tour-list').classList.add('sorting'),
+    onStart: (event) => {
+      $('#tour-list').classList.add('sorting');
+      startAutoScroll(event.originalEvent);
+    },
     onEnd: onDragEnd,
   });
 }
 
+// Défilement de la liste pendant qu'on tient une carte près du haut ou du bas
+// de l'écran. Une petite avance à chaque image (mouvement régulier), d'autant
+// plus rapide que le doigt est près du bord. La zone du haut commence sous le
+// bandeau bleu, qui recouvre le haut de la liste.
+const SCROLL_ZONE = 150; // hauteur de chaque zone, en pixels
+const SCROLL_MAX = 1200; // vitesse au bord, en pixels par seconde
+let dragY = null; // hauteur du doigt à l'écran
+let scrollFrame = 0;
+
+// Vitesse de défilement (pixels par seconde, négative vers le haut) pour un
+// doigt à la hauteur `y`, la liste étant visible entre `top` et `bottom`.
+function scrollSpeed(y, top, bottom) {
+  const zone = Math.min(SCROLL_ZONE, (bottom - top) / 3);
+  const up = (top + zone - y) / zone;
+  const down = (y - (bottom - zone)) / zone;
+  const depth = Math.min(1, Math.max(up, down));
+  if (depth <= 0) return 0;
+  return (up > down ? -1 : 1) * SCROLL_MAX * (0.15 + 0.85 * depth);
+}
+
+const trackDrag = (event) => {
+  dragY = (event.touches?.[0] ?? event).clientY;
+};
+
+function startAutoScroll(event) {
+  stopAutoScroll();
+  dragY = (event?.touches?.[0] ?? event)?.clientY ?? null;
+  document.addEventListener('pointermove', trackDrag, { passive: true });
+  document.addEventListener('touchmove', trackDrag, { passive: true });
+  const top = $('.topbar').getBoundingClientRect().bottom;
+  // on ne défile pas plus loin que la liste : en haut, on s'arrête quand son
+  // début arrive sous le bandeau (sinon on remonterait jusqu'à la carte)
+  const list = $('#tour-list').getBoundingClientRect();
+  const highest = list.top + window.scrollY - top - 8;
+  const lowest = list.bottom + window.scrollY - window.innerHeight + 8;
+  let last = performance.now();
+  const step = (now) => {
+    const seconds = Math.min(50, now - last) / 1000;
+    last = now;
+    const speed = dragY === null ? 0 : scrollSpeed(dragY, top, window.innerHeight);
+    const y = window.scrollY;
+    if (speed < 0 && y > highest) window.scrollTo(0, Math.max(highest, y + speed * seconds));
+    if (speed > 0 && y < lowest) window.scrollTo(0, Math.min(lowest, y + speed * seconds));
+    scrollFrame = requestAnimationFrame(step);
+  };
+  scrollFrame = requestAnimationFrame(step);
+}
+
+function stopAutoScroll() {
+  cancelAnimationFrame(scrollFrame);
+  document.removeEventListener('pointermove', trackDrag);
+  document.removeEventListener('touchmove', trackDrag);
+  dragY = null;
+}
+
 async function onDragEnd(event) {
+  stopAutoScroll();
   $('#tour-list').classList.remove('sorting');
   const id = Number(event.item.dataset.id);
   // l'intervention à faire qui suit désormais celle qu'on vient de lâcher
