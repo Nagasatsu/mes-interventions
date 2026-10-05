@@ -22,8 +22,9 @@ interventions de la journée, pour faire le moins de route possible.
 4. Elle affiche le parcours sur une carte, avec un bouton Waze / Google Maps
    par intervention, et des boutons « Fait » / « Absent » (client pas là)
    pour suivre l'avancement.
-   On peut aussi placer une intervention à la main : bouton « Déplacer » (⇅)
-   sur sa carte, puis « Mettre ici » à l'endroit voulu. Elle et celles qui la
+   On peut aussi placer une intervention à la main : rester appuyé sur sa
+   carte et la faire glisser, ou bouton « Déplacer » (⇅) puis « Mettre ici »
+   à l'endroit voulu. Elle et celles qui la
    précèdent gardent cet ordre ; le reste est retrié au mieux à partir de là.
    « Remettre l'ordre automatique » annule les placements à la main.
 5. En cours de journée : « Recalculer d'ici » retrie ce qui reste à partir
@@ -75,6 +76,9 @@ s'affiche en bas de l'écran Réglages.
 - **OSRM** (serveur de démonstration, données OpenStreetMap) : temps de trajet
   en voiture. S'il ne répond pas, l'appli estime les temps à vol d'oiseau.
 - **OpenStreetMap** : fond de carte.
+
+Bibliothèques chargées depuis cdnjs : Leaflet (carte) et Sortable
+(glisser-déposer des interventions).
 
 La lecture des photos se fait sur le téléphone (l'outil Tesseract et le
 dictionnaire français sont téléchargés depuis jsDelivr la première fois).

@@ -11,8 +11,9 @@
 // Numéro de version : à augmenter à CHAQUE mise en ligne. C'est ce changement
 // qui prévient les téléphones où l'appli est restée ouverte qu'il y a du
 // nouveau (ils rechargent alors tout seuls). Il s'affiche dans les Réglages.
-const CACHE = 'mes-interventions-v7';
-const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
+const CACHE = 'mes-interventions-v8';
+const LIBRARIES = 'https://cdnjs.cloudflare.com/ajax/libs/'; // carte (Leaflet) et glisser-déposer (Sortable)
+const LEAFLET = `${LIBRARIES}leaflet/1.9.4/`;
 const APP_FILES = [
   './',
   './index.html',
@@ -27,6 +28,7 @@ const APP_FILES = [
   './icons/icon-192.png',
   `${LEAFLET}leaflet.min.js`,
   `${LEAFLET}leaflet.min.css`,
+  `${LIBRARIES}Sortable/1.15.6/Sortable.min.js`,
 ];
 
 self.addEventListener('install', (event) => {
@@ -52,10 +54,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   const isOwnFile = url.origin === self.location.origin;
   // adresses, itinéraires et fonds de carte : directement sur le réseau
-  if (request.method !== 'GET' || !(isOwnFile || url.href.startsWith(LEAFLET))) return;
+  if (request.method !== 'GET' || !(isOwnFile || url.href.startsWith(LIBRARIES))) return;
 
   event.respondWith(
-    // Leaflet a un numéro de version dans son adresse : il ne change jamais
+    // les bibliothèques ont un numéro de version dans leur adresse : elles ne changent jamais
     fetch(request, isOwnFile ? { cache: 'no-cache' } : {})
       .then((response) => {
         if (response.ok) {

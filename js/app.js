@@ -936,6 +936,7 @@ function renderTour() {
 
   $('#recalc').hidden = !nextId;
   $('#tour-list').classList.toggle('moving-mode', Boolean(moving));
+  sortable?.option('disabled', Boolean(moving)); // pas de glisser pendant « Déplacer » / « Mettre ici »
   $('#tour-list').innerHTML = `
     <li class="stop">${endpoint('D', `Départ · ${esc(tour.start.name)}`, tour.start)}</li>
     ${tour.stops.map(stopItem).join('')}
@@ -1139,8 +1140,10 @@ async function recalculate(added = [], { fromStart = false, place = null, unlock
     renderTour();
     $('.stop.next')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     if (!fromStart && !gps) toast('Position GPS introuvable : recalcul depuis la dernière intervention faite.');
+    return true;
   } catch (err) {
     toast(err.message);
+    return false;
   } finally {
     idle();
   }
@@ -1148,9 +1151,49 @@ async function recalculate(added = [], { fromStart = false, place = null, unlock
 
 // ---------- Déplacer une intervention à la main ----------
 //
-// « Déplacer » sur une carte, puis « Mettre ici » à l'endroit voulu. Tout ce
-// qui se trouve au-dessus de l'intervention déplacée, et elle-même, garde
-// ensuite cet ordre ; ce qui vient après est retrié au mieux à partir de là.
+// Deux façons : rester appuyé sur une carte et la faire glisser, ou le bouton
+// « Déplacer » puis « Mettre ici » à l'endroit voulu (plus pratique pour un
+// grand déplacement). Tout ce qui se trouve au-dessus de l'intervention
+// déplacée, et elle-même, garde ensuite cet ordre ; ce qui vient après est
+// retrié au mieux à partir de là.
+
+let sortable = null;
+
+// Glisser-déposer (bibliothèque Sortable) : appui long au doigt, glisser
+// direct à la souris. Les boutons de la carte gardent leur rôle.
+function enableDragging() {
+  if (!window.Sortable) return; // pas chargée (hors ligne) : il reste le bouton « Déplacer »
+  sortable = new Sortable($('#tour-list'), {
+    draggable: 'li.stop.todo[data-id]',
+    filter: 'button, a, select',
+    preventOnFilter: false,
+    delay: 350,
+    delayOnTouchOnly: true,
+    touchStartThreshold: 6,
+    forceFallback: true,
+    fallbackTolerance: 4,
+    animation: 150,
+    scrollSensitivity: 90,
+    scrollSpeed: 14,
+    onChoose: () => navigator.vibrate?.(20), // petit signal : la carte est attrapée
+    onStart: () => $('#tour-list').classList.add('sorting'),
+    onEnd: onDragEnd,
+  });
+}
+
+async function onDragEnd(event) {
+  $('#tour-list').classList.remove('sorting');
+  const id = Number(event.item.dataset.id);
+  // l'intervention à faire qui suit désormais celle qu'on vient de lâcher
+  let next = event.item.nextElementSibling;
+  while (next && !next.matches('li.stop.todo[data-id]')) next = next.nextElementSibling;
+  const beforeId = next ? Number(next.dataset.id) : null;
+  const todo = state.tour.stops.filter((stop) => statusOf(stop) === 'todo');
+  const at = todo.findIndex((stop) => stop.id === id);
+  const moved = (todo[at + 1]?.id ?? null) !== beforeId;
+  const done = moved && (await recalculate([], { fromStart: notStarted(state.tour), place: { id, beforeId } }));
+  if (!done) renderTour(); // remet la liste comme elle était
+}
 
 let movingId = null; // intervention en cours de déplacement (on choisit où la mettre)
 const MOVE_ICON =
@@ -1624,6 +1667,7 @@ function init() {
   $('#review-continue').addEventListener('click', continueReview);
 
   $('#tour-list').addEventListener('click', onTourClick);
+  enableDragging();
   $('#tour-list').addEventListener('change', onSlotChange);
   for (const button of document.querySelectorAll('[data-agency]')) {
     button.addEventListener('click', () => setLunchAtAgency(button.dataset.agency === 'yes'));

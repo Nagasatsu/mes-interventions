@@ -551,6 +551,32 @@ textarea:focus {
   cursor: pointer;
 }
 
+/* glisser-déposer : l'appui long attrape la carte au lieu de sélectionner le texte */
+.stop.todo .stop-card {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.sortable-chosen .stop-card {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary);
+}
+
+.sortable-ghost {
+  opacity: 0.35; /* l'endroit où la carte va se poser */
+}
+
+.sortable-drag .stop-card {
+  box-shadow: 0 0 0 3px var(--primary), 0 10px 28px rgb(0 0 0 / 0.35);
+}
+
+/* les temps de trajet ne veulent plus rien dire tant qu'on n'a pas lâché */
+.sorting .leg,
+.sortable-drag .leg {
+  visibility: hidden;
+}
+
 /* pendant le déplacement : cartes réduites à l'essentiel, pour voir la liste */
 .moving-mode .actions,
 .moving-mode .phone,
