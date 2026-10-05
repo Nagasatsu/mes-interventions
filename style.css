@@ -529,8 +529,95 @@ textarea:focus {
 }
 
 .stop-text {
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* ---------- Déplacer une intervention à la main ---------- */
+
+/* bouton « Déplacer », en haut à droite de la carte */
+.move-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin: -4px -4px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* pendant le déplacement : cartes réduites à l'essentiel, pour voir la liste */
+.moving-mode .actions,
+.moving-mode .phone,
+.moving-mode .details,
+.moving-mode .badge,
+.moving-mode .slot-select,
+.moving-mode .priority-toggle,
+.moving-mode .lunch-break {
+  display: none;
+}
+
+.moving-mode {
+  padding-bottom: 96px; /* place pour le bandeau du bas */
+}
+
+.moving-mode .stop.moving .stop-card {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary);
+}
+
+/* emplacement où poser l'intervention déplacée */
+.drop .btn {
+  margin: 8px 0 0;
+  border: 2px dashed var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* repère : au-dessus, l'ordre choisi à la main */
+.order-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 12px;
+  margin-top: 8px;
+  padding: 2px 4px 0 12px;
+  border-top: 2px dashed var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.order-note .btn {
+  width: auto;
+  min-height: 40px;
+  margin: 0;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+/* consigne affichée en bas pendant le déplacement */
+.move-bar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 1100;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
 }
 
 .stop-text .title {

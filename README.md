@@ -22,6 +22,10 @@ interventions de la journée, pour faire le moins de route possible.
 4. Elle affiche le parcours sur une carte, avec un bouton Waze / Google Maps
    par intervention, et des boutons « Fait » / « Absent » (client pas là)
    pour suivre l'avancement.
+   On peut aussi placer une intervention à la main : bouton « Déplacer » (⇅)
+   sur sa carte, puis « Mettre ici » à l'endroit voulu. Elle et celles qui la
+   précèdent gardent cet ordre ; le reste est retrié au mieux à partir de là.
+   « Remettre l'ordre automatique » annule les placements à la main.
 5. En cours de journée : « Recalculer d'ici » retrie ce qui reste à partir
    de la position GPS (ou de la dernière intervention faite), et « + Ajouter »
    insère une intervention urgente puis recalcule.

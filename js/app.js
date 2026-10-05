@@ -103,7 +103,8 @@ function render(view) {
 
 function renderTopbar() {
   $('#nav-back').hidden = depth === 0;
-  $('#app-title').textContent = (depth > 0 && TITLES[currentView]) || 'Mes interventions';
+  const title = history.state?.overlay === 'move' ? 'Déplacer' : TITLES[currentView];
+  $('#app-title').textContent = (depth > 0 && title) || 'Mes interventions';
 }
 
 // Ouvre un écran par-dessus l'écran actuel.
@@ -114,7 +115,8 @@ function open(view) {
   render(view);
 }
 
-// Ouvre un volet du même écran (feuille scannée, formulaire d'ajout).
+// Ouvre un volet du même écran (feuille scannée, formulaire d'ajout,
+// déplacement d'une intervention).
 function openOverlay(overlay) {
   depth++;
   history.pushState({ view: currentView, depth, overlay }, '');
@@ -125,6 +127,7 @@ function openOverlay(overlay) {
 function showOverlay(overlay) {
   if (overlay !== 'viewer') closeViewer();
   $('#add-form').hidden = overlay !== 'add';
+  if (overlay !== 'move') stopMoving();
 }
 
 // Revient d'un cran, comme le bouton Retour du téléphone.
@@ -140,6 +143,8 @@ function goHome() {
 
 // Le navigateur vient de revenir en arrière (ou en avant) : on affiche l'écran correspondant.
 function onPopState(event) {
+  // retour « en avant » sur un déplacement déjà terminé : il n'y a plus rien à déplacer
+  if (event.state?.overlay === 'move' && movingId === null) return history.back();
   const leaving = currentView;
   depth = event.state?.depth ?? 0;
   showOverlay(event.state?.overlay);
@@ -661,7 +666,8 @@ function lunchStop() {
 
 // Meilleur ordre de passage pour `stops` (la pause à l'agence peut en faire
 // partie), entre le point 0 et le point n+1 de la matrice des temps.
-function bestOrder(durations, stops) {
+// `startTime` : heure à laquelle on quitte le point 0.
+function bestOrder(durations, stops, startTime = Date.now()) {
   const n = stops.length;
   const all = stops.map((_, i) => i + 1);
   const slots = stops.map((stop) => stop.slot);
@@ -675,7 +681,7 @@ function bestOrder(durations, stops) {
   const lunchFrom = lunchWindow().from;
   const onsite = state.settings.onsiteMinutes * 60 * 1000;
   const arrival = new Map();
-  let time = Date.now();
+  let time = startTime;
   let previous = 0;
   for (const i of draft) {
     time += durations[previous][i] * 1000;
@@ -690,12 +696,38 @@ function bestOrder(durations, stops) {
 // Ce que coûtent les interventions prioritaires dans l'ordre calculé : leur
 // nombre, et la route en plus (en secondes) par rapport au meilleur ordre sans
 // aucune priorité.
-function priorityToll(durations, stops, order) {
+function priorityToll(durations, stops, order, startTime) {
   const count = stops.filter((stop) => stop.priority).length;
   if (!count) return { count, cost: 0 };
   const pathOf = (path) => [0, ...path, stops.length + 1];
-  const free = bestOrder(durations, stops.map((stop) => ({ ...stop, priority: false })));
+  const free = bestOrder(durations, stops.map((stop) => ({ ...stop, priority: false })), startTime);
   return { count, cost: Math.max(0, pathCost(durations, pathOf(order)) - pathCost(durations, pathOf(free))) };
+}
+
+// Ordre des étapes qui restent, dans la matrice des temps (0 = point de
+// départ, 1..n = étapes, n+1 = retour). Les `lockedCount` premières ont été
+// placées à la main : elles gardent leur ordre. Les autres sont triées au
+// mieux à partir de la dernière étape placée à la main.
+function orderAfterLocked(durations, todo, lockedCount) {
+  const n = todo.length;
+  const head = todo.slice(0, lockedCount).map((_, i) => i + 1);
+  const free = todo.slice(lockedCount);
+  if (!free.length) return { order: head, priorities: { count: 0, cost: 0 } };
+  const nodes = [lockedCount, ...free.map((_, i) => lockedCount + 1 + i), n + 1];
+  const sub = nodes.map((a) => nodes.map((b) => durations[a][b]));
+  // heure à laquelle on repart de la dernière étape placée à la main
+  const onsite = state.settings.onsiteMinutes * 60 * 1000;
+  const lunch = lunchWindow();
+  let startTime = Date.now();
+  for (const i of head) {
+    startTime += durations[i - 1][i] * 1000;
+    startTime = isLunch(todo[i - 1]) ? Math.max(startTime, lunch.from) + (lunch.to - lunch.from) : startTime + onsite;
+  }
+  const tail = bestOrder(sub, free, startTime);
+  return {
+    order: [...head, ...tail.map((i) => lockedCount + i)],
+    priorities: priorityToll(sub, free, tail, startTime),
+  };
 }
 
 function penalize(durations, ranks) {
@@ -796,8 +828,33 @@ function renderTour() {
     ${priorities && priorityLeft ? `<p class="priority-note">★ ${plural(priorities, 'prioritaire')} en premier${detour >= 60 ? ` · ${fmtDuration(detour)} de route en plus` : ''}</p>` : ''}
     ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}`;
 
+  // Déplacement à la main : bouton sur chaque carte, puis emplacements
+  // « Mettre ici » entre les cartes pendant qu'on déplace (voir startMoving).
+  const todoStops = tour.stops.filter((stop) => statusOf(stop) === 'todo');
+  const moving = todoStops.find((stop) => stop.id === movingId) ?? null;
+  const movingIndex = todoStops.indexOf(moving);
+  const moveButton = (status) =>
+    status === 'todo' && !moving && todoStops.length > 1
+      ? `<button class="move-btn" data-move type="button" aria-label="Déplacer">${MOVE_ICON}</button>`
+      : '';
+  const dropHere = (target, text = 'Mettre ici') =>
+    `<li class="drop"><button class="btn" data-drop="${target}" type="button">${text}</button></li>`;
+  const dropBefore = (stop) => {
+    const i = todoStops.indexOf(stop);
+    // pas d'emplacement juste avant ou juste après elle-même : ce serait la même place
+    return moving && i >= 0 && i !== movingIndex && i !== movingIndex + 1 ? dropHere(stop.id) : '';
+  };
+  const dropLast = moving && movingIndex !== todoStops.length - 1 ? dropHere('end', 'Mettre ici, en dernier') : '';
+  // repère sous la dernière intervention placée à la main
+  const lastLocked = todoStops.filter((stop) => stop.locked).at(-1);
+  const orderNote = (stop) =>
+    stop === lastLocked && !moving
+      ? `<li class="order-note"><span>↑ Ordre choisi à la main</span><button class="btn link" data-auto type="button">Remettre l’ordre automatique</button></li>`
+      : '';
+
   let number = 0;
-  const stopItem = (stop) => (isLunch(stop) ? lunchItem(stop) : interventionItem(stop, ++number));
+  const stopItem = (stop) =>
+    dropBefore(stop) + (isLunch(stop) ? lunchItem(stop) : interventionItem(stop, ++number)) + orderNote(stop);
   const lunchItem = (stop) => {
     const status = statusOf(stop);
     const isNext = stop.id === nextId;
@@ -808,7 +865,7 @@ function renderTour() {
            <button class="btn success" data-action="done" type="button">Pause finie ✓</button>`
         : '<button class="btn" data-action="todo" type="button">Annuler</button>';
     return `
-    <li class="stop lunch ${status}${isNext ? ' next' : ''}" data-id="${stop.id}">
+    <li class="stop lunch ${status}${isNext ? ' next' : ''}${stop === moving ? ' moving' : ''}" data-id="${stop.id}">
       ${legLine(stop.leg)}
       <div class="stop-card lunch-card">
         <div class="stop-head">
@@ -819,6 +876,7 @@ function renderTour() {
             <p class="sub">${esc(stop.label)}</p>
             <p class="details lunch-time"></p>
           </div>
+          ${moveButton(status)}
         </div>
         <div class="actions">${actions}</div>
       </div>
@@ -835,7 +893,7 @@ function renderTour() {
            <button class="btn success" data-action="done" type="button">Fait ✓</button>`
         : '<button class="btn" data-action="todo" type="button">Annuler</button>';
     return `
-    <li class="stop ${status}${isNext ? ' next' : ''}" data-id="${stop.id}">
+    <li class="stop ${status}${isNext ? ' next' : ''}${stop === moving ? ' moving' : ''}" data-id="${stop.id}">
       ${legLine(stop.leg)}
       <div class="stop-card">
         <div class="stop-head">
@@ -851,6 +909,7 @@ function renderTour() {
             ${stop.details ? `<p class="details">${esc(detailsWithoutPhone(stop.details))}</p>` : ''}
             ${stop.phone ? `<a class="phone" href="tel:${stop.phone}">Appeler le ${formatPhone(stop.phone)}</a>` : ''}
           </div>
+          ${moveButton(status)}
         </div>
         <div class="actions">${actions}</div>
       </div>
@@ -876,10 +935,14 @@ function renderTour() {
     </div>`;
 
   $('#recalc').hidden = !nextId;
+  $('#tour-list').classList.toggle('moving-mode', Boolean(moving));
   $('#tour-list').innerHTML = `
     <li class="stop">${endpoint('D', `Départ · ${esc(tour.start.name)}`, tour.start)}</li>
     ${tour.stops.map(stopItem).join('')}
+    ${dropLast}
     <li class="stop">${legLine(tour.back)}${endpoint('R', 'Retour · Domicile', tour.end)}</li>`;
+  $('#move-bar').hidden = !moving;
+  $('#move-bar').textContent = moving ? `Où mettre « ${moving.title ?? moving.raw} » ? Touche « Mettre ici » à l’endroit voulu.` : '';
 
   renderProgress();
   renderAgencyToggle();
@@ -901,6 +964,11 @@ const detailsWithoutPhone = (details) =>
 function onTourClick(event) {
   const star = event.target.closest('button[data-priority]');
   if (star) return togglePriority(Number(star.closest('[data-id]').dataset.id));
+  const mover = event.target.closest('button[data-move]');
+  if (mover) return startMoving(Number(mover.closest('[data-id]').dataset.id));
+  const drop = event.target.closest('button[data-drop]');
+  if (drop) return dropStop(drop.dataset.drop === 'end' ? null : Number(drop.dataset.drop));
+  if (event.target.closest('button[data-auto]')) return recalculate([], { fromStart: notStarted(state.tour), unlock: true });
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const id = Number(button.closest('[data-id]').dataset.id);
@@ -946,7 +1014,8 @@ function planDay(tour, todo) {
       lunchDone = true;
       continue;
     }
-    if (!lunchDone && !agency && (time >= lunchFrom || stop.slot === 'AM')) {
+    // (un rendez-vous « Après-midi » placé à la main plus tôt se fait quand on l'a mis)
+    if (!lunchDone && !agency && (time >= lunchFrom || (stop.slot === 'AM' && !stop.locked))) {
       const from = Math.max(time, lunchFrom);
       time = from + lunchDuration;
       lunch = { beforeId: stop.id, from, to: time };
@@ -1012,15 +1081,23 @@ function lastDonePlace(tour) {
 }
 
 // Retrie les interventions qui restent (plus d'éventuelles nouvelles) à partir
-// de l'endroit où l'on est. Les interventions terminées gardent leur place.
-async function recalculate(added = [], { fromStart = false } = {}) {
+// de l'endroit où l'on est. Les interventions terminées gardent leur place,
+// et celles placées à la main (locked) gardent leur ordre, en tête.
+// - place : { id, beforeId } déplace d'abord une intervention à la main ;
+// - unlock : oublie tous les placements à la main (ordre automatique).
+async function recalculate(added = [], { fromStart = false, place = null, unlock = false } = {}) {
   const tour = state.tour;
   busy(fromStart ? 'Calcul du parcours…' : 'Recherche de ta position…');
   try {
     const finished = tour.stops.filter((stop) => statusOf(stop) !== 'todo');
     // la pause à l'agence suit le réglage actuel : ajoutée, ou retirée si on n'y va plus
-    const todo = [...tour.stops.filter((stop) => statusOf(stop) === 'todo' && !isLunch(stop)), ...added];
-    if (!finished.some(isLunch) && lunchAtAgencyToday()) todo.push(lunchStop());
+    const wantLunch = !finished.some(isLunch) && lunchAtAgencyToday();
+    let remaining = tour.stops.filter((stop) => statusOf(stop) === 'todo' && (wantLunch || !isLunch(stop)));
+    if (place) remaining = placeStop(remaining, place.id, place.beforeId);
+    if (unlock) remaining = remaining.map(({ locked, ...stop }) => stop);
+    if (wantLunch && !remaining.some(isLunch)) remaining.push(lunchStop());
+    const locked = remaining.filter((stop) => stop.locked);
+    const todo = [...locked, ...remaining.filter((stop) => !stop.locked), ...added];
     const gps = fromStart ? null : await currentPosition();
     const from = fromStart ? tour.start : gps ?? lastDonePlace(tour);
     const n = todo.length;
@@ -1029,7 +1106,7 @@ async function recalculate(added = [], { fromStart = false } = {}) {
     const matrix = await travelMatrix([from, ...todo, tour.end]);
     busy('Recherche du meilleur ordre…');
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const order = bestOrder(matrix.durations, todo);
+    const { order, priorities } = orderAfterLocked(matrix.durations, todo, locked.length);
     const ordered = order.map((i) => todo[i - 1]);
 
     busy('Tracé de l’itinéraire…');
@@ -1051,7 +1128,7 @@ async function recalculate(added = [], { fromStart = false } = {}) {
       distance: allLegs.reduce((sum, leg) => sum + leg.distance, 0),
     };
     tour.from = fromStart ? undefined : from;
-    tour.priorities = priorityToll(matrix.durations, todo, order);
+    tour.priorities = priorities;
     tour.line = route?.line ?? null;
     tour.estimated = matrix.source !== 'osrm';
     tour.version = (tour.version ?? 0) + 1; // pour recadrer la carte
@@ -1067,6 +1144,48 @@ async function recalculate(added = [], { fromStart = false } = {}) {
   } finally {
     idle();
   }
+}
+
+// ---------- Déplacer une intervention à la main ----------
+//
+// « Déplacer » sur une carte, puis « Mettre ici » à l'endroit voulu. Tout ce
+// qui se trouve au-dessus de l'intervention déplacée, et elle-même, garde
+// ensuite cet ordre ; ce qui vient après est retrié au mieux à partir de là.
+
+let movingId = null; // intervention en cours de déplacement (on choisit où la mettre)
+const MOVE_ICON =
+  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 20V5M4 9l4-4 4 4M16 4v15M12 15l4 4 4-4"/></svg>';
+
+function startMoving(id) {
+  movingId = id;
+  openOverlay('move'); // le bouton Retour annule
+  renderTour();
+  $('#tour-list .stop.moving')?.scrollIntoView({ block: 'center' });
+}
+
+function stopMoving() {
+  if (movingId === null) return;
+  movingId = null;
+  if (currentView === 'tour' && state.tour) renderTour();
+}
+
+async function dropStop(beforeId) {
+  const id = movingId;
+  goBack(); // referme le mode « Déplacer »
+  if (id === null) return;
+  await recalculate([], { fromStart: notStarted(state.tour), place: { id, beforeId } });
+}
+
+// Met l'intervention `id` juste avant `beforeId` (null = en dernier). Elle et
+// toutes celles qui la précèdent gardent désormais cet ordre (locked).
+function placeStop(todo, id, beforeId) {
+  const moved = todo.find((stop) => stop.id === id);
+  if (!moved) return todo;
+  const rest = todo.filter((stop) => stop !== moved);
+  const at = rest.findIndex((stop) => stop.id === beforeId);
+  const index = at < 0 ? rest.length : at;
+  rest.splice(index, 0, moved);
+  return rest.map((stop, i) => ({ ...stop, locked: Boolean(stop.locked) || i <= index }));
 }
 
 async function addStop(event) {
