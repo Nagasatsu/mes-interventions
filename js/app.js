@@ -1715,6 +1715,7 @@ function init() {
   history.replaceState({ depth: 0 }, '', location.pathname);
   render(homeView());
   if (shared && currentView === 'tour') open('input');
+  announceUpdate();
 
   if ('serviceWorker' in navigator) {
     // Quand une nouvelle version de l'appli prend le relais, on recharge pour
@@ -1730,11 +1731,14 @@ function init() {
       .register('sw.js', { updateViaCache: 'none' })
       .then((registration) => {
         // L'appli installée reste ouverte en arrière-plan, parfois plusieurs
-        // jours, sans jamais se recharger : à chaque retour dessus, on regarde
-        // s'il existe une nouvelle version.
-        document.addEventListener('visibilitychange', () => {
+        // jours, sans jamais se recharger : à chaque retour dessus, puis toutes
+        // les minutes tant qu'elle est à l'écran, on regarde s'il existe une
+        // nouvelle version.
+        const check = () => {
           if (document.visibilityState === 'visible') registration.update().catch(() => {});
-        });
+        };
+        document.addEventListener('visibilitychange', check);
+        setInterval(check, 60000);
       })
       .catch((err) => console.warn('Service worker', err));
   }
@@ -1743,6 +1747,7 @@ function init() {
 // ---------- Mise à jour de l'appli ----------
 
 const VERSION_PREFIX = 'mes-interventions-v'; // nom de la copie locale de l'appli, voir sw.js
+const UPDATED_KEY = 'mes-interventions-updated';
 let updateReady = false;
 let reloading = false;
 
@@ -1752,14 +1757,37 @@ let reloading = false;
 function applyUpdate() {
   if (!updateReady || reloading || depth > 0 || !$('#busy').hidden) return;
   reloading = true;
+  try {
+    sessionStorage.setItem(UPDATED_KEY, '1'); // pour le dire une fois rechargée
+  } catch {
+    // pas de stockage : la mise à jour se fait quand même, sans message
+  }
   location.reload();
 }
 
-// Numéro de la version installée, affiché dans les réglages.
-async function showVersion() {
+// Numéro de la version installée (celui de sw.js), ou '' s'il est inconnu.
+async function installedVersion() {
   const names = await window.caches?.keys().catch(() => []);
   const name = names?.find((key) => key.startsWith(VERSION_PREFIX));
-  $('#app-version').textContent = name ? `Version ${name.slice(VERSION_PREFIX.length)}` : '';
+  return name ? name.slice(VERSION_PREFIX.length) : '';
+}
+
+// Affiché dans les réglages.
+async function showVersion() {
+  const version = await installedVersion();
+  $('#app-version').textContent = version ? `Version ${version}` : '';
+}
+
+// Juste après une mise à jour automatique : on le dit, avec le numéro.
+async function announceUpdate() {
+  try {
+    if (!sessionStorage.getItem(UPDATED_KEY)) return;
+    sessionStorage.removeItem(UPDATED_KEY);
+  } catch {
+    return;
+  }
+  const version = await installedVersion();
+  toast(version ? `Appli mise à jour : version ${version}.` : 'Appli mise à jour.');
 }
 
 init();
