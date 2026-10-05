@@ -318,7 +318,7 @@ async function onSlotChange(event) {
   stop.slot = select.value || null;
   rewriteLine(stop, withSlot(stop.raw, stop.slot));
   saveState();
-  await recalculate([], { fromStart: notStarted(tour) });
+  await recalculate([], { fromStart: notStarted(tour), reordered: true });
 }
 
 // « Prioritaire » activé ou retiré sur une intervention du parcours : même
@@ -329,7 +329,7 @@ async function togglePriority(id) {
   stop.priority = !stop.priority;
   rewriteLine(stop, withPriority(stop.raw, stop.priority));
   saveState();
-  await recalculate([], { fromStart: notStarted(tour) });
+  await recalculate([], { fromStart: notStarted(tour), reordered: true });
 }
 
 // Remplace la ligne d'une intervention dans la liste du jour.
@@ -820,6 +820,7 @@ function renderTour() {
       <div><b>${fmtDistance(tour.total.distance)}</b><span>au total</span></div>
     </div>
     ${saved.duration >= 60 ? `<p class="gain"><b>${fmtDuration(saved.duration)}</b><span>de route en moins par rapport à l'ordre de la liste${saved.distance >= 1000 ? ` (${fmtDistance(saved.distance)} de moins)` : ''}</span></p>` : ''}
+    ${saved.duration <= -60 ? `<p class="hint">${fmtDuration(-saved.duration)} de route en plus que dans l'ordre de la liste.</p>` : ''}
     ${priorities && priorityLeft ? `<p class="priority-note">★ ${plural(priorities, 'prioritaire')} en premier${detour >= 60 ? ` · ${fmtDuration(detour)} de route en plus` : ''}</p>` : ''}
     ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}`;
 
@@ -1051,8 +1052,10 @@ function lastDonePlace(tour) {
 // de l'endroit où l'on est. Les interventions terminées gardent leur place,
 // et celles placées à la main (locked) gardent leur ordre, en tête.
 // - place : { id, beforeId } déplace d'abord une intervention à la main ;
-// - unlock : oublie tous les placements à la main (ordre automatique).
-async function recalculate(added = [], { fromStart = false, place = null, unlock = false } = {}) {
+// - unlock : oublie tous les placements à la main (ordre automatique) ;
+// - reordered : l'ordre change parce qu'on l'a demandé (déplacement, priorité,
+//   matin / après-midi) : le gain affiché suit, et un message dit ce que ça change.
+async function recalculate(added = [], { fromStart = false, place = null, unlock = false, reordered = Boolean(place || unlock) } = {}) {
   const tour = state.tour;
   busy(fromStart ? 'Calcul du parcours…' : 'Recherche de ta position…');
   try {
@@ -1090,10 +1093,21 @@ async function recalculate(added = [], { fromStart = false, place = null, unlock
     tour.stops = [...finished, ...ordered.map((stop, k) => ({ ...stop, leg: legs[k] }))];
     tour.back = legs[n];
     const allLegs = [...tour.stops.map((stop) => stop.leg), tour.back];
+    const previous = tour.total;
     tour.total = {
       duration: allLegs.reduce((sum, leg) => sum + leg.duration, 0),
       distance: allLegs.reduce((sum, leg) => sum + leg.distance, 0),
     };
+    // Un ordre changé à la main allonge ou raccourcit la route : le gain par
+    // rapport à l'ordre de la liste change d'autant. (Une intervention ajoutée
+    // ou le passage à l'agence ne changent pas ce que le tri a fait gagner.)
+    const longer = tour.total.duration - previous.duration;
+    if (reordered) {
+      tour.saved = {
+        duration: tour.saved.duration - longer,
+        distance: tour.saved.distance - (tour.total.distance - previous.distance),
+      };
+    }
     tour.from = fromStart ? undefined : from;
     tour.priorities = priorities;
     tour.line = route?.line ?? null;
@@ -1101,11 +1115,23 @@ async function recalculate(added = [], { fromStart = false, place = null, unlock
     tour.version = (tour.version ?? 0) + 1; // pour recadrer la carte
     if (!fromStart) tour.recalculatedAt = Date.now();
     const entry = state.history.find((e) => e.id === tour.createdAt);
-    if (entry) entry.stops = tour.stops.filter((stop) => !isLunch(stop)).length;
+    if (entry) {
+      entry.stops = tour.stops.filter((stop) => !isLunch(stop)).length;
+      entry.savedTime = Math.max(0, tour.saved.duration);
+      entry.savedDistance = Math.max(0, tour.saved.distance);
+    }
     saveState();
     renderTour();
-    $('.stop.next')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    if (!fromStart && !gps) toast('Position GPS introuvable : recalcul depuis la dernière intervention faite.');
+    // après un déplacement, on reste sur la carte qu'on vient de poser
+    const anchor = place ? `.stop[data-id="${place.id}"]` : '.stop.next';
+    $(`#tour-list ${anchor}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const notes = [];
+    if (reordered) {
+      const change = Math.round(longer / 60) === 0 ? 'même durée' : `${fmtDuration(Math.abs(longer))} de ${longer > 0 ? 'plus' : 'moins'}`;
+      notes.push(`Route recalculée : ${fmtDuration(tour.total.duration)} (${change}).`);
+    }
+    if (!fromStart && !gps) notes.push('Position GPS introuvable : recalcul depuis la dernière intervention faite.');
+    if (notes.length) toast(notes.join(' '));
     return true;
   } catch (err) {
     toast(err.message);
