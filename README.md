@@ -23,8 +23,7 @@ interventions de la journée, pour faire le moins de route possible.
    par intervention, et des boutons « Fait » / « Absent » (client pas là)
    pour suivre l'avancement.
    On peut aussi placer une intervention à la main : rester appuyé sur sa
-   carte et la faire glisser, ou bouton « Déplacer » (⇅) puis « Mettre ici »
-   à l'endroit voulu. Elle et celles qui la
+   carte, la faire glisser et la lâcher à l'endroit voulu. Elle et celles qui la
    précèdent gardent cet ordre ; le reste est retrié au mieux à partir de là.
    « Remettre l'ordre automatique » annule les placements à la main.
 5. En cours de journée : « Recalculer d'ici » retrie ce qui reste à partir

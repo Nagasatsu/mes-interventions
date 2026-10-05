@@ -103,8 +103,7 @@ function render(view) {
 
 function renderTopbar() {
   $('#nav-back').hidden = depth === 0;
-  const title = history.state?.overlay === 'move' ? 'Déplacer' : TITLES[currentView];
-  $('#app-title').textContent = (depth > 0 && title) || 'Mes interventions';
+  $('#app-title').textContent = (depth > 0 && TITLES[currentView]) || 'Mes interventions';
 }
 
 // Ouvre un écran par-dessus l'écran actuel.
@@ -115,8 +114,7 @@ function open(view) {
   render(view);
 }
 
-// Ouvre un volet du même écran (feuille scannée, formulaire d'ajout,
-// déplacement d'une intervention).
+// Ouvre un volet du même écran (feuille scannée, formulaire d'ajout).
 function openOverlay(overlay) {
   depth++;
   history.pushState({ view: currentView, depth, overlay }, '');
@@ -127,7 +125,6 @@ function openOverlay(overlay) {
 function showOverlay(overlay) {
   if (overlay !== 'viewer') closeViewer();
   $('#add-form').hidden = overlay !== 'add';
-  if (overlay !== 'move') stopMoving();
 }
 
 // Revient d'un cran, comme le bouton Retour du téléphone.
@@ -143,8 +140,6 @@ function goHome() {
 
 // Le navigateur vient de revenir en arrière (ou en avant) : on affiche l'écran correspondant.
 function onPopState(event) {
-  // retour « en avant » sur un déplacement déjà terminé : il n'y a plus rien à déplacer
-  if (event.state?.overlay === 'move' && movingId === null) return history.back();
   const leaving = currentView;
   depth = event.state?.depth ?? 0;
   showOverlay(event.state?.overlay);
@@ -828,33 +823,15 @@ function renderTour() {
     ${priorities && priorityLeft ? `<p class="priority-note">★ ${plural(priorities, 'prioritaire')} en premier${detour >= 60 ? ` · ${fmtDuration(detour)} de route en plus` : ''}</p>` : ''}
     ${tour.estimated ? '<p class="hint warn-text">Service d’itinéraire injoignable : temps estimés à vol d’oiseau.</p>' : ''}`;
 
-  // Déplacement à la main : bouton sur chaque carte, puis emplacements
-  // « Mettre ici » entre les cartes pendant qu'on déplace (voir startMoving).
-  const todoStops = tour.stops.filter((stop) => statusOf(stop) === 'todo');
-  const moving = todoStops.find((stop) => stop.id === movingId) ?? null;
-  const movingIndex = todoStops.indexOf(moving);
-  const moveButton = (status) =>
-    status === 'todo' && !moving && todoStops.length > 1
-      ? `<button class="move-btn" data-move type="button" aria-label="Déplacer">${MOVE_ICON}</button>`
-      : '';
-  const dropHere = (target, text = 'Mettre ici') =>
-    `<li class="drop"><button class="btn" data-drop="${target}" type="button">${text}</button></li>`;
-  const dropBefore = (stop) => {
-    const i = todoStops.indexOf(stop);
-    // pas d'emplacement juste avant ou juste après elle-même : ce serait la même place
-    return moving && i >= 0 && i !== movingIndex && i !== movingIndex + 1 ? dropHere(stop.id) : '';
-  };
-  const dropLast = moving && movingIndex !== todoStops.length - 1 ? dropHere('end', 'Mettre ici, en dernier') : '';
-  // repère sous la dernière intervention placée à la main
-  const lastLocked = todoStops.filter((stop) => stop.locked).at(-1);
+  // repère sous la dernière intervention placée à la main (voir enableDragging)
+  const lastLocked = tour.stops.filter((stop) => statusOf(stop) === 'todo' && stop.locked).at(-1);
   const orderNote = (stop) =>
-    stop === lastLocked && !moving
+    stop === lastLocked
       ? `<li class="order-note"><span>↑ Ordre choisi à la main</span><button class="btn link" data-auto type="button">Remettre l’ordre automatique</button></li>`
       : '';
 
   let number = 0;
-  const stopItem = (stop) =>
-    dropBefore(stop) + (isLunch(stop) ? lunchItem(stop) : interventionItem(stop, ++number)) + orderNote(stop);
+  const stopItem = (stop) => (isLunch(stop) ? lunchItem(stop) : interventionItem(stop, ++number)) + orderNote(stop);
   const lunchItem = (stop) => {
     const status = statusOf(stop);
     const isNext = stop.id === nextId;
@@ -865,7 +842,7 @@ function renderTour() {
            <button class="btn success" data-action="done" type="button">Pause finie ✓</button>`
         : '<button class="btn" data-action="todo" type="button">Annuler</button>';
     return `
-    <li class="stop lunch ${status}${isNext ? ' next' : ''}${stop === moving ? ' moving' : ''}" data-id="${stop.id}">
+    <li class="stop lunch ${status}${isNext ? ' next' : ''}" data-id="${stop.id}">
       ${legLine(stop.leg)}
       <div class="stop-card lunch-card">
         <div class="stop-head">
@@ -876,7 +853,6 @@ function renderTour() {
             <p class="sub">${esc(stop.label)}</p>
             <p class="details lunch-time"></p>
           </div>
-          ${moveButton(status)}
         </div>
         <div class="actions">${actions}</div>
       </div>
@@ -893,7 +869,7 @@ function renderTour() {
            <button class="btn success" data-action="done" type="button">Fait ✓</button>`
         : '<button class="btn" data-action="todo" type="button">Annuler</button>';
     return `
-    <li class="stop ${status}${isNext ? ' next' : ''}${stop === moving ? ' moving' : ''}" data-id="${stop.id}">
+    <li class="stop ${status}${isNext ? ' next' : ''}" data-id="${stop.id}">
       ${legLine(stop.leg)}
       <div class="stop-card">
         <div class="stop-head">
@@ -909,7 +885,6 @@ function renderTour() {
             ${stop.details ? `<p class="details">${esc(detailsWithoutPhone(stop.details))}</p>` : ''}
             ${stop.phone ? `<a class="phone" href="tel:${stop.phone}">Appeler le ${formatPhone(stop.phone)}</a>` : ''}
           </div>
-          ${moveButton(status)}
         </div>
         <div class="actions">${actions}</div>
       </div>
@@ -935,15 +910,10 @@ function renderTour() {
     </div>`;
 
   $('#recalc').hidden = !nextId;
-  $('#tour-list').classList.toggle('moving-mode', Boolean(moving));
-  sortable?.option('disabled', Boolean(moving)); // pas de glisser pendant « Déplacer » / « Mettre ici »
   $('#tour-list').innerHTML = `
     <li class="stop">${endpoint('D', `Départ · ${esc(tour.start.name)}`, tour.start)}</li>
     ${tour.stops.map(stopItem).join('')}
-    ${dropLast}
     <li class="stop">${legLine(tour.back)}${endpoint('R', 'Retour · Domicile', tour.end)}</li>`;
-  $('#move-bar').hidden = !moving;
-  $('#move-bar').textContent = moving ? `Où mettre « ${moving.title ?? moving.raw} » ? Touche « Mettre ici » à l’endroit voulu.` : '';
 
   renderProgress();
   renderAgencyToggle();
@@ -965,10 +935,6 @@ const detailsWithoutPhone = (details) =>
 function onTourClick(event) {
   const star = event.target.closest('button[data-priority]');
   if (star) return togglePriority(Number(star.closest('[data-id]').dataset.id));
-  const mover = event.target.closest('button[data-move]');
-  if (mover) return startMoving(Number(mover.closest('[data-id]').dataset.id));
-  const drop = event.target.closest('button[data-drop]');
-  if (drop) return dropStop(drop.dataset.drop === 'end' ? null : Number(drop.dataset.drop));
   if (event.target.closest('button[data-auto]')) return recalculate([], { fromStart: notStarted(state.tour), unlock: true });
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -1151,19 +1117,15 @@ async function recalculate(added = [], { fromStart = false, place = null, unlock
 
 // ---------- Déplacer une intervention à la main ----------
 //
-// Deux façons : rester appuyé sur une carte et la faire glisser, ou le bouton
-// « Déplacer » puis « Mettre ici » à l'endroit voulu (plus pratique pour un
-// grand déplacement). Tout ce qui se trouve au-dessus de l'intervention
-// déplacée, et elle-même, garde ensuite cet ordre ; ce qui vient après est
-// retrié au mieux à partir de là.
-
-let sortable = null;
+// On reste appuyé sur une carte, on la fait glisser, on la lâche. Tout ce qui
+// se trouve au-dessus de l'intervention déplacée, et elle-même, garde ensuite
+// cet ordre ; ce qui vient après est retrié au mieux à partir de là.
 
 // Glisser-déposer (bibliothèque Sortable) : appui long au doigt, glisser
 // direct à la souris. Les boutons de la carte gardent leur rôle.
 function enableDragging() {
-  if (!window.Sortable) return; // pas chargée (hors ligne) : il reste le bouton « Déplacer »
-  sortable = new Sortable($('#tour-list'), {
+  if (!window.Sortable) return; // bibliothèque pas chargée (première ouverture hors ligne)
+  Sortable.create($('#tour-list'), {
     draggable: 'li.stop.todo[data-id]',
     filter: 'button, a, select',
     preventOnFilter: false,
@@ -1251,30 +1213,6 @@ async function onDragEnd(event) {
   const moved = (todo[at + 1]?.id ?? null) !== beforeId;
   const done = moved && (await recalculate([], { fromStart: notStarted(state.tour), place: { id, beforeId } }));
   if (!done) renderTour(); // remet la liste comme elle était
-}
-
-let movingId = null; // intervention en cours de déplacement (on choisit où la mettre)
-const MOVE_ICON =
-  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 20V5M4 9l4-4 4 4M16 4v15M12 15l4 4 4-4"/></svg>';
-
-function startMoving(id) {
-  movingId = id;
-  openOverlay('move'); // le bouton Retour annule
-  renderTour();
-  $('#tour-list .stop.moving')?.scrollIntoView({ block: 'center' });
-}
-
-function stopMoving() {
-  if (movingId === null) return;
-  movingId = null;
-  if (currentView === 'tour' && state.tour) renderTour();
-}
-
-async function dropStop(beforeId) {
-  const id = movingId;
-  goBack(); // referme le mode « Déplacer »
-  if (id === null) return;
-  await recalculate([], { fromStart: notStarted(state.tour), place: { id, beforeId } });
 }
 
 // Met l'intervention `id` juste avant `beforeId` (null = en dernier). Elle et
