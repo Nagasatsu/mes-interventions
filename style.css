@@ -933,8 +933,27 @@ select.minutes-select.set {
   font-weight: 700;
 }
 
+/* une demi-journée : heure de début → heure de fin */
+.memo-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  color: var(--muted);
+}
+
+.memo-range input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.memo-day .small-label {
+  margin: 0;
+}
+
 .memo-day input[type="text"] {
-  margin: 10px 0 0;
+  margin: 4px 0 0;
 }
 
 .memo-day .btn.link {
@@ -954,12 +973,6 @@ select.minutes-select.set {
 .memo-total b {
   color: var(--success);
   font-size: 20px;
-}
-
-.memo-total span {
-  display: block;
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .period-nav {

@@ -52,7 +52,7 @@ function loadState() {
   } catch {
     // stockage indisponible : on repart de zéro
   }
-  return {
+  const state = {
     settings: {
       home: null,
       work: null,
@@ -67,8 +67,10 @@ function loadState() {
     pending: null, // interventions en cours de vérification (pas reprises après fermeture)
     tour: saved.tour || null, // parcours calculé
     history: saved.history || [], // un résumé par parcours, pour les statistiques
-    hours: saved.hours || {}, // pense-bête : heures de début et de fin, par jour
+    hours: saved.hours || {}, // pense-bête : heures du matin et de l'après-midi, par jour
   };
+  splitOldHours(state.hours, state.settings);
+  return state;
 }
 
 function saveState() {
@@ -1450,27 +1452,60 @@ function toast(message) {
 
 // ---------- Pense-bête : les heures de la semaine ----------
 //
-// Chaque soir, en rentrant, on note l'heure de début et l'heure de fin de sa
-// journée (et un mot si besoin). Tout reste sur le téléphone.
+// Chaque soir, en rentrant, on note ses heures de la journée : début et fin
+// du matin, début et fin de l'après-midi (et un mot si besoin). Tout reste sur
+// le téléphone.
 
 const memoView = { offset: 0 }; // 0 = cette semaine, -1 = la précédente…
 
-const toMinutes = (clock) => {
+// Les deux demi-journées, avec le nom de leurs champs dans state.hours[jour].
+const HALF_DAYS = [
+  { name: 'Matin', from: 'amStart', to: 'amEnd' },
+  { name: 'Après-midi', from: 'pmStart', to: 'pmEnd' },
+];
+const HOUR_FIELDS = ['amStart', 'amEnd', 'pmStart', 'pmEnd', 'note'];
+
+// (fonctions déclarées avec « function » : elles servent dès le chargement, voir loadState)
+function toMinutes(clock) {
   const [hours, minutes] = clock.split(':').map(Number);
   return hours * 60 + minutes;
-};
+}
+function toClock(minutes) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
 const clockText = (clock) => clock.replace(/^0?(\d+):(\d+)$/, '$1 h $2'); // « 08:05 » → « 8 h 05 »
 
-// Minutes travaillées dans la journée : de l'heure de début à l'heure de fin,
-// moins la pause déjeuner des réglages (pour sa partie comprise dans la journée).
+// Minutes travaillées dans la journée : le matin plus l'après-midi, pour les
+// demi-journées dont le début et la fin sont notés. null si rien n'est complet.
 function workedMinutes(entry) {
-  if (!entry?.start || !entry?.end) return null;
-  const start = toMinutes(entry.start);
-  const end = toMinutes(entry.end);
-  if (end <= start) return null;
-  const lunchFrom = toMinutes(state.settings.lunchStart);
-  const lunchTo = lunchFrom + state.settings.lunchMinutes;
-  return end - start - Math.max(0, Math.min(end, lunchTo) - Math.max(start, lunchFrom));
+  let total = null;
+  for (const half of HALF_DAYS) {
+    const from = entry?.[half.from];
+    const to = entry?.[half.to];
+    if (from && to && toMinutes(to) > toMinutes(from)) total = (total ?? 0) + toMinutes(to) - toMinutes(from);
+  }
+  return total;
+}
+
+// Les premières notes n'avaient qu'un début et une fin pour toute la journée :
+// on les range dans le matin et l'après-midi, coupées par la pause des réglages.
+function splitOldHours(hours, settings) {
+  const lunchFrom = toMinutes(settings.lunchStart);
+  const lunchTo = lunchFrom + settings.lunchMinutes;
+  for (const [day, { start, end, ...entry }] of Object.entries(hours)) {
+    if (start === undefined && end === undefined) continue;
+    const from = start ? toMinutes(start) : null;
+    const to = end ? toMinutes(end) : null;
+    if (from !== null && to !== null && from < lunchFrom && to > lunchTo) {
+      Object.assign(entry, { amStart: start, amEnd: toClock(lunchFrom), pmStart: toClock(lunchTo), pmEnd: end });
+    } else if (from !== null && from >= lunchFrom) {
+      Object.assign(entry, { pmStart: start, pmEnd: end });
+    } else {
+      Object.assign(entry, { amStart: start }, to !== null && to > lunchTo ? { pmEnd: end } : { amEnd: end });
+    }
+    hours[day] = entry;
+  }
+  return hours;
 }
 
 // Heure à laquelle la dernière intervention du jour a été terminée (« 16:42 »),
@@ -1481,30 +1516,38 @@ function lastDoneClock() {
   const last = Math.max(0, ...tour.stops.filter((stop) => !isLunch(stop) && stop.changedAt).map((stop) => stop.changedAt));
   if (!last) return null;
   const date = new Date(last);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return toClock(date.getHours() * 60 + date.getMinutes());
 }
 
 function renderMemo() {
   const { days, label } = periodDays('week', memoView.offset);
   const today = dayKey(new Date());
+  // heure de fin proposée : celle du matin si la dernière intervention date d'avant la pause
   const suggestion = lastDoneClock();
+  const suggested = suggestion && (toMinutes(suggestion) <= toMinutes(state.settings.lunchStart) ? 'amEnd' : 'pmEnd');
   $('#memo-label').textContent = label;
   $('#memo-next').disabled = memoView.offset >= 0;
   $('#memo-days').innerHTML = days
     .map((day) => {
       const entry = state.hours[day.key] ?? {};
       const isToday = day.key === today;
+      const clock = (field, text) =>
+        `<input type="time" data-field="${field}" value="${esc(entry[field] ?? '')}" aria-label="${text}">`;
+      const halves = HALF_DAYS.map(
+        (half) => `
+          <p class="small-label">${half.name}</p>
+          <div class="memo-range">
+            ${clock(half.from, `${half.name} : début`)}<span aria-hidden="true">→</span>${clock(half.to, `${half.name} : fin`)}
+          </div>`,
+      ).join('');
       const fill =
-        isToday && !entry.end && suggestion
-          ? `<button class="btn link" data-fill="${suggestion}" type="button">Mettre ${clockText(suggestion)}, heure de la dernière intervention</button>`
+        isToday && suggested && !entry[suggested]
+          ? `<button class="btn link" data-fill="${suggestion}" data-into="${suggested}" type="button">Mettre ${clockText(suggestion)}, heure de la dernière intervention</button>`
           : '';
       return `
         <li class="card memo-day${isToday ? ' today' : ''}" data-day="${day.key}">
           <p class="memo-head"><b>${esc(day.long)}${isToday ? ' · aujourd’hui' : ''}</b><span class="memo-worked"></span></p>
-          <div class="two-cols">
-            <label class="small-label">Début<input type="time" data-field="start" value="${esc(entry.start ?? '')}"></label>
-            <label class="small-label">Fin<input type="time" data-field="end" value="${esc(entry.end ?? '')}"></label>
-          </div>
+          ${halves}
           ${fill}
           <input type="text" data-field="note" value="${esc(entry.note ?? '')}" placeholder="Note" aria-label="Note" maxlength="120">
         </li>`;
@@ -1526,14 +1569,13 @@ function renderMemoTotals() {
       counted++;
     }
   }
-  const pause = state.settings.lunchMinutes;
   $('#memo-total').hidden = !counted;
-  $('#memo-total').innerHTML = `Total de la semaine : <b>${fmtMinutes(total)}</b>${pause > 0 ? `<span>pause déjeuner de ${fmtMinutes(pause)} déduite</span>` : ''}`;
+  $('#memo-total').innerHTML = `Total de la semaine : <b>${fmtMinutes(total)}</b>`;
 }
 
 function setHours(day, field, value) {
   const entry = { ...state.hours[day], [field]: value };
-  if (entry.start || entry.end || entry.note) state.hours[day] = entry;
+  if (HOUR_FIELDS.some((name) => entry[name])) state.hours[day] = entry;
   else delete state.hours[day];
   saveState();
 }
@@ -1548,7 +1590,7 @@ function onMemoInput(event) {
 function onMemoClick(event) {
   const button = event.target.closest('button[data-fill]');
   if (!button) return;
-  setHours(button.closest('[data-day]').dataset.day, 'end', button.dataset.fill);
+  setHours(button.closest('[data-day]').dataset.day, button.dataset.into, button.dataset.fill);
   renderMemo();
 }
 
@@ -1560,8 +1602,10 @@ async function shareMemo() {
     .map((day) => {
       const entry = state.hours[day.key];
       const worked = workedMinutes(entry);
-      const clocks = entry.start || entry.end ? `${entry.start ? clockText(entry.start) : '?'} – ${entry.end ? clockText(entry.end) : '?'}` : '';
-      return `${day.long} : ${[clocks, worked === null ? '' : `(${fmtMinutes(worked)})`, entry.note ?? ''].filter(Boolean).join(' ')}`;
+      const ranges = HALF_DAYS.filter((half) => entry[half.from] || entry[half.to])
+        .map((half) => `${entry[half.from] ? clockText(entry[half.from]) : '?'} – ${entry[half.to] ? clockText(entry[half.to]) : '?'}`)
+        .join(' / ');
+      return `${day.long} : ${[ranges, worked === null ? '' : `(${fmtMinutes(worked)})`, entry.note ?? ''].filter(Boolean).join(' ')}`;
     });
   if (!lines.length) return toast('Rien de noté pour cette semaine.');
   const total = days.reduce((sum, day) => sum + (workedMinutes(state.hours[day.key]) ?? 0), 0);
@@ -1831,6 +1875,16 @@ function init() {
   $('#memo-next').addEventListener('click', () => {
     memoView.offset = Math.min(0, memoView.offset + 1);
     renderMemo();
+  });
+  // Champs d'heure : selon le téléphone, il faut viser la petite horloge pour
+  // ouvrir le choix de l'heure. Un appui n'importe où dans le champ l'ouvre.
+  document.addEventListener('click', (event) => {
+    const input = event.target.closest?.('input[type="time"]');
+    try {
+      input?.showPicker?.();
+    } catch {
+      // choix de l'heure déjà ouvert, ou refusé par le navigateur : le champ reste utilisable
+    }
   });
   $('#memo-days').addEventListener('input', onMemoInput);
   $('#memo-days').addEventListener('change', onMemoInput);

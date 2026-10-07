@@ -39,10 +39,10 @@ interventions de la journée, pour faire le moins de route possible.
    l'après-midi (recalcul immédiat sur l'écran du parcours).
 7. L'écran Statistiques montre le temps de route gagné par semaine et par
    mois (un parcours calculé compte pour sa journée).
-8. Le pense-bête « Mes heures » (horloge en haut) : chaque soir on note
-   l'heure de début et de fin de sa journée, semaine par semaine, avec une
-   note si besoin. L'appli fait le total (pause déjeuner déduite) et peut
-   envoyer la semaine par message.
+8. Le pense-bête « Mes heures » (horloge en haut) : chaque soir on note ses
+   heures du matin et de l'après-midi (début et fin de chacun), semaine par
+   semaine, avec une note si besoin. L'appli fait le total et peut envoyer
+   la semaine par message.
 
 C'est une « appli web installable » (PWA) : elle s'ouvre dans Chrome et
 s'ajoute à l'écran d'accueil comme une vraie appli. Pas besoin du Play Store.
