@@ -942,6 +942,7 @@ function renderTour() {
             ${isNext ? '<span class="badge">Prochaine</span>' : ''}
             ${status === 'absent' ? '<span class="badge absent">Client absent</span>' : ''}
             ${stop.added ? '<span class="badge added">Ajoutée</span>' : ''}
+            ${stop.added && status === 'todo' ? '<button class="remove-added" data-remove type="button">Supprimer</button>' : ''}
             ${slotControl(stop, status)}
             ${priorityControl(stop, status)}
             ${minutesControl(stop, status)}
@@ -1008,6 +1009,8 @@ const detailsWithoutPhone = (details) =>
 function onTourClick(event) {
   const star = event.target.closest('button[data-priority]');
   if (star) return togglePriority(Number(star.closest('[data-id]').dataset.id));
+  const remover = event.target.closest('button[data-remove]');
+  if (remover) return removeAdded(Number(remover.closest('[data-id]').dataset.id));
   if (event.target.closest('button[data-auto]')) return recalculate([], { fromStart: notStarted(state.tour), unlock: true });
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -1127,15 +1130,21 @@ function lastDonePlace(tour) {
 // - place : { id, beforeId } déplace d'abord une intervention à la main ;
 // - unlock : oublie tous les placements à la main (ordre automatique) ;
 // - reordered : l'ordre change parce qu'on l'a demandé (déplacement, priorité,
-//   matin / après-midi) : le gain affiché suit, et un message dit ce que ça change.
-async function recalculate(added = [], { fromStart = false, place = null, unlock = false, reordered = Boolean(place || unlock) } = {}) {
+//   matin / après-midi) : le gain affiché suit, et un message dit ce que ça change ;
+// - remove : numéro d'une intervention à retirer du parcours (ajoutée par erreur).
+async function recalculate(
+  added = [],
+  { fromStart = false, place = null, unlock = false, remove = null, reordered = Boolean(place || unlock) } = {},
+) {
   const tour = state.tour;
   busy(fromStart ? 'Calcul du parcours…' : 'Recherche de ta position…');
   try {
     const finished = tour.stops.filter((stop) => statusOf(stop) !== 'todo');
     // la pause à l'agence suit le réglage actuel : ajoutée, ou retirée si on n'y va plus
     const wantLunch = !finished.some(isLunch) && lunchAtAgencyToday();
-    let remaining = tour.stops.filter((stop) => statusOf(stop) === 'todo' && (wantLunch || !isLunch(stop)));
+    let remaining = tour.stops.filter(
+      (stop) => statusOf(stop) === 'todo' && stop.id !== remove && (wantLunch || !isLunch(stop)),
+    );
     if (place) remaining = placeStop(remaining, place.id, place.beforeId);
     if (unlock) remaining = remaining.map(({ locked, ...stop }) => stop);
     if (wantLunch && !remaining.some(isLunch)) remaining.push(lunchStop());
@@ -1324,6 +1333,17 @@ function placeStop(todo, id, beforeId) {
   const index = at < 0 ? rest.length : at;
   rest.splice(index, 0, moved);
   return rest.map((stop, i) => ({ ...stop, locked: Boolean(stop.locked) || i <= index }));
+}
+
+// Une intervention ajoutée à la main par erreur : on la retire (après
+// confirmation) et le reste du parcours est recalculé.
+async function removeAdded(id) {
+  const tour = state.tour;
+  const stop = tour.stops.find((s) => s.id === id);
+  if (!stop?.added) return;
+  const sure = await ask(`Supprimer cette intervention ?\n\n${stop.title ?? stop.raw}`, { yes: 'Supprimer', danger: true });
+  if (!sure) return;
+  if (await recalculate([], { fromStart: notStarted(tour), remove: id })) toast('Intervention supprimée.');
 }
 
 async function addStop(event) {

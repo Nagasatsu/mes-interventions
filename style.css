@@ -672,6 +672,20 @@ select.minutes-select.set {
   color: var(--primary);
 }
 
+/* « Supprimer » : seulement sur une intervention ajoutée à la main */
+.remove-added {
+  padding: 3px 8px;
+  border: 1px solid var(--bad);
+  border-radius: 99px;
+  background: none;
+  color: var(--bad);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
 /* « Prioritaire » : s'active directement sur la carte */
 .priority-toggle {
   padding: 3px 8px;

@@ -30,7 +30,8 @@ interventions de la journée, pour faire le moins de route possible.
    « Remettre l'ordre automatique » annule les placements à la main.
 5. En cours de journée : « Recalculer d'ici » retrie ce qui reste à partir
    de la position GPS (ou de la dernière intervention faite), et « + Ajouter »
-   insère une intervention urgente puis recalcule.
+   insère une intervention urgente puis recalcule (une intervention ajoutée
+   par erreur se retire avec son bouton « Supprimer »).
 6. L'heure de retour à la maison est estimée en continu (route qui reste +
    temps sur place + pause déjeuner, réglables ; les rendez-vous de
    l'après-midi commencent après la pause). Le temps sur place habituel se
