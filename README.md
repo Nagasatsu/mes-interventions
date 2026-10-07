@@ -7,7 +7,9 @@ interventions de la journée, pour faire le moins de route possible.
    directement, une page à la fois ; on peut aussi choisir des photos déjà prises) :
    le téléphone lit la feuille lui-même (Tesseract), sans envoyer la photo.
    On peut aussi coller une liste, une intervention par ligne.
-2. L'appli trouve chaque adresse, toujours dans la ville écrite. Un nom de rue
+2. L'appli trouve chaque adresse, toujours dans la ville écrite. Si le nom de
+   la ville a une faute de frappe (« Noyelle sous Lens »), elle propose la
+   commune au nom proche et attend qu'on l'accepte. Un nom de rue
    abrégé (« RUE PASTEUR » pour « Rue Louis Pasteur ») est complété
    quand la ville n'a qu'une rue de ce nom. Rien n'est changé en silence :
    chaque correction et chaque adresse douteuse est montrée, et se confirme

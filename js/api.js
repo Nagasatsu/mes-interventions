@@ -3,7 +3,7 @@
 // - OSRM (basé sur OpenStreetMap) : temps de trajet en voiture entre les points
 // Si OSRM ne répond pas, on se rabat sur une estimation à vol d'oiseau.
 
-import { askedStreet, cityLast, compare, nameWords, words } from './address.js';
+import { askedStreet, cityLast, compare, distance, nameWords, words } from './address.js';
 
 const GEOCODE_URL = 'https://data.geopf.fr/geocodage/search';
 const OSRM_URL = 'https://router.project-osrm.org';
@@ -11,6 +11,10 @@ const GEOCODE_PARALLEL = 5;
 const CANDIDATES = 8; // on regarde plusieurs résultats, pas seulement le premier
 const STREETS = 10; // rues de la ville comparées quand le nom de rue ne correspond pas exactement
 const ALTERNATIVES = 3; // autres rues proposées quand il y a un doute
+const SUGGESTIONS = 3; // villes proposées quand le nom écrit ressemble à une faute de frappe
+const SUGGESTION_RANGE = 100000; // … à moins de 100 km du secteur (mètres)
+// mots de liaison des noms de communes composés (« Noyelles-sous-Lens », « Sains-en-Gohelle »)
+const CONNECTORS = new Set(['sous', 'sur', 'les', 'lez', 'en', 'aux']);
 
 // Adresse → coordonnées.
 //
@@ -21,7 +25,10 @@ const ALTERNATIVES = 3; // autres rues proposées quand il y a un doute
 //   `unique` (seule rue de ce nom dans la ville) ou `alternatives` (autres
 //   rues possibles de la même ville) ;
 // - null : rien trouvé ;
-// - { unknownCity: true } : aucune ville reconnue dans le texte, on ne devine pas.
+// - { unknownCity: true } : aucune ville reconnue dans le texte, on ne devine
+//   pas. Si le nom écrit ressemble à celui d'une commune (une lettre oubliée),
+//   `suggestions` propose la correction : c'est à l'utilisateur de l'accepter,
+//   elle n'est jamais appliquée toute seule.
 //
 // Le service d'adresses classe ses résultats par ressemblance du texte : pour
 // « 12 rue Jean Jaurès Denain » il met en premier « 12 Rue Jean Jaurès à
@@ -40,16 +47,29 @@ export async function geocode(query, near) {
 async function locate(q, near) {
   const best = pickBest(q, await search({ q, limit: CANDIDATES }, near));
   if (!best) return null;
-  if (compare(q, best).city) return best;
-
-  // Le meilleur résultat n'est pas dans une ville écrite dans la demande.
-  // Si la demande nomme une ville (ou un code postal), on cherche uniquement là.
   const postcode = q.match(/(?<!\d)\d{5}(?!\d)/)?.[0];
-  const citycode = postcode ? null : await askedCity(q, near);
-  if (!postcode && !citycode) return { unknownCity: true };
-  const inCity = pickBest(q, await search({ q, limit: CANDIDATES, ...(postcode ? { postcode } : { citycode }) }));
+  if (compare(q, best).city && (postcode || !endsLongerName(q, best.city))) return best;
+
+  // Le meilleur résultat n'est pas (sûrement) dans la ville écrite dans la
+  // demande : on cherche uniquement dans cette ville, ou ce code postal.
+  const town = postcode ? { postcode } : await writtenCity(q, near);
+  if (!town) return { unknownCity: true };
+  if (town.suggestions) return { unknownCity: true, suggestions: town.suggestions };
+  const inCity = pickBest(q, await search({ q, limit: CANDIDATES, ...town }));
   if (!inCity) return null;
   return compare(q, inCity).city ? inCity : { unknownCity: true };
+}
+
+// La ville trouvée n'est-elle que la fin d'un nom plus long écrit dans la
+// demande ? « … Noyelle sous Lens » se termine par « Lens », mais ce n'est pas
+// Lens : le mot de liaison juste avant (« sous ») le signale. Dans ce cas, on
+// regarde la ville écrite en entier avant d'accepter quoi que ce soit.
+function endsLongerName(q, city) {
+  const tokens = words(q);
+  const name = words(city ?? '');
+  const start = tokens.length - name.length;
+  if (start < 1 || !name.every((word, i) => tokens[start + i] === word)) return false;
+  return CONNECTORS.has(tokens[start - 1]);
 }
 
 // Le nom de rue trouvé n'est pas exactement celui demandé : prénom en plus
@@ -105,35 +125,75 @@ async function search(params, near) {
 }
 
 // Le meilleur résultat : d'abord la bonne rue, puis la bonne ville, puis le
-// bon type de voie ; à égalité, la note du service.
+// bon type de voie ; à égalité, la ville au nom le plus complet (« Noyelles-
+// sous-Lens » avant « Lens » quand les deux sont écrits), puis la note du service.
 function pickBest(query, candidates) {
   const rank = (candidate) => {
     const same = compare(query, candidate);
     return (same.street ? 4 : 0) + (same.city ? 2 : 0) + (same.type ? 1 : 0);
   };
-  return [...candidates].sort((a, b) => rank(b) - rank(a) || b.score - a.score)[0];
+  const cityWords = (candidate) => (compare(query, candidate).city ? nameWords(candidate.city).length : 0);
+  return [...candidates].sort((a, b) => rank(b) - rank(a) || cityWords(b) - cityWords(a) || b.score - a.score)[0];
 }
 
-// Ville écrite à la fin de la demande (« … NOYELLES SOUS LENS ») : on essaie
-// les derniers mots, du groupe le plus long au plus court, et on garde le plus
-// long qui est exactement le nom d'une commune. Renvoie son code, ou null.
-async function askedCity(query, near) {
-  const tokens = words(query);
+// Ville écrite à la fin de la demande (« … NOYELLES SOUS LENS »). On essaie les
+// derniers mots, du groupe le plus long au plus court :
+// - le plus long groupe qui est exactement le nom d'une commune donne
+//   { citycode } ;
+// - s'il n'y en a pas, ou si un groupe plus long ressemble beaucoup au nom
+//   d'une autre commune (« Noyelle sous Lens » : exactement « Lens », mais
+//   presque « Noyelles-sous-Lens »), on ne choisit pas : { suggestions }, les
+//   communes au nom proche, avec la demande réécrite pour chacune ;
+// - rien de ressemblant : null.
+async function writtenCity(q, near) {
+  const tokens = words(q);
   const tails = [];
   for (let size = Math.min(5, tokens.length - 1); size >= 1; size--) {
     const tail = tokens.slice(-size);
     if (!tail.some((word) => /^\d+$/.test(word))) tails.push(tail);
   }
-  const found = await Promise.all(
-    tails.map(async (tail) => {
-      const communes = await search({ q: tail.join(' '), type: 'municipality', limit: 3 }, near).catch(() => []);
-      return communes.find((commune) => {
-        const name = words(commune.city ?? commune.label ?? '');
-        return name.length === tail.length && name.every((word) => tail.includes(word));
-      });
-    }),
+  const lists = await Promise.all(
+    tails.map((tail) => search({ q: tail.join(' '), type: 'municipality', limit: 5 }, near).catch(() => [])),
   );
-  return found.find(Boolean)?.citycode ?? null;
+  let exact = null;
+  const close = [];
+  tails.forEach((tail, i) => {
+    const text = tail.join(' ');
+    for (const commune of lists[i]) {
+      const name = words(commune.city ?? '');
+      if (!name.length) continue;
+      if (name.length === tail.length && name.every((word) => tail.includes(word))) {
+        exact ??= { tail, commune }; // les groupes sont essayés du plus long au plus court
+        continue;
+      }
+      const written = name.join(' ');
+      const gap = distance(text, written);
+      // une ou deux lettres d'écart selon la longueur du nom, et dans le secteur
+      const tolerance = written.length <= 5 ? 1 : written.length <= 12 ? 2 : 3;
+      if (gap <= tolerance && (!near || haversine(near, commune) <= SUGGESTION_RANGE)) close.push({ tail, commune, gap });
+    }
+  });
+  const rivals = (exact ? close.filter((match) => match.tail.length > exact.tail.length) : close).sort(
+    (a, b) => a.gap - b.gap || b.tail.length - a.tail.length,
+  );
+  if (exact && !rivals.length) return { citycode: exact.commune.citycode };
+  const suggestions = new Map();
+  for (const { tail, commune } of rivals) {
+    if (suggestions.size >= SUGGESTIONS || suggestions.has(commune.citycode)) continue;
+    suggestions.set(commune.citycode, {
+      city: commune.city,
+      postcode: commune.postcode,
+      query: `${withoutLastWords(q, tail.length)} ${commune.city}`.trim(),
+    });
+  }
+  return suggestions.size ? { suggestions: [...suggestions.values()] } : null;
+}
+
+// La demande sans ses `count` derniers mots (le nom de ville à remplacer).
+function withoutLastWords(q, count) {
+  const found = [...q.matchAll(/[\p{L}\p{N}]+/gu)];
+  const first = found[found.length - count];
+  return first ? q.slice(0, first.index).replace(/[\s,;:-]+$/, '') : q;
 }
 
 // Géocode une liste d'adresses, quelques-unes à la fois.

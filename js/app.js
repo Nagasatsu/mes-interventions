@@ -204,9 +204,11 @@ async function saveSettings(event) {
       workQuery ? findPlace(workQuery, state.settings.work) : null,
     ]);
     if (!home) return toast('Adresse du domicile introuvable. Ajoute le code postal ou la ville.');
-    if (home.unknownCity) return toast('Domicile : ville non reconnue. Ajoute la ville ou le code postal.');
+    const cityHint = (place) =>
+      place.suggestions?.length ? `Tu voulais dire « ${place.suggestions[0].city} » ?` : 'Ajoute la ville ou le code postal.';
+    if (home.unknownCity) return toast(`Domicile : ville non reconnue. ${cityHint(home)}`);
     if (workQuery && !work) return toast('Adresse du travail introuvable. Ajoute le code postal ou la ville.');
-    if (work?.unknownCity) return toast('Travail : ville non reconnue. Ajoute la ville ou le code postal.');
+    if (work?.unknownCity) return toast(`Travail : ville non reconnue. ${cityHint(work)}`);
     const { lunchAtAgency } = state.settings;
     state.settings = { home, work, startFrom, onsiteMinutes, lunchStart, lunchMinutes, lunchAtAgency };
     saveState();
@@ -556,6 +558,7 @@ function toStop(id, line, found) {
   const priority = Boolean(line.priority);
   const stop = { id, raw, query, title, details, phone, slot, priority, found: usable, unknownCity: Boolean(found?.unknownCity) };
   if (line.minutes) stop.minutes = line.minutes; // temps sur place propre à cette intervention
+  if (found?.suggestions?.length) stop.suggestions = found.suggestions; // villes au nom proche, à proposer
   if (usable) {
     const doubt = doubtReason(line.query, found);
     const corrected = doubt ? '' : correctionNote(line, found);
@@ -582,7 +585,9 @@ function renderReview() {
       const status = !stop.found ? 'bad' : needsCheck(stop) ? 'warn' : 'ok';
       const result = !stop.found
         ? stop.unknownCity
-          ? UNKNOWN_CITY
+          ? stop.suggestions
+            ? 'Ville non reconnue.'
+            : UNKNOWN_CITY
           : 'Adresse introuvable'
         : `${status !== 'warn' ? 'Trouvé' : stop.corrected ? `Corrigé automatiquement (${esc(stop.corrected)})` : `Trouvé, mais pas sûr (${esc(stop.doubt)})`} : <b>${esc(stop.label)}</b>`;
       const editor = `
@@ -598,6 +603,14 @@ function renderReview() {
             ${alternatives.map((alt, i) => `<button class="btn" data-action="pick" data-alt="${i}" type="button">${esc(alt.street)}</button>`).join('')}
           </div>`
         : '';
+      // faute dans le nom de la ville : les communes au nom proche, à choisir d'un appui
+      const cities = (status === 'bad' && stop.suggestions) || [];
+      const cityChoices = cities.length
+        ? `<p class="hint alts-title">Tu voulais dire :</p>
+          <div class="alts">
+            ${cities.map((city, i) => `<button class="btn" data-action="city" data-alt="${i}" type="button">${esc(city.city)} (${esc(city.postcode)})</button>`).join('')}
+          </div>`
+        : '';
       const confirm = `
           <div class="row">
             <button class="btn success" data-action="confirm" type="button">C’est la bonne ✓</button>
@@ -608,7 +621,7 @@ function renderReview() {
           <p class="raw">${esc(stop.title ?? stop.raw)}</p>
           ${stop.details ? `<p class="hint">${esc(stop.details)}</p>` : ''}
           <p class="result">${result}</p>
-          ${status === 'bad' ? editor : `${status === 'warn' ? confirm + choices : ''}
+          ${status === 'bad' ? cityChoices + editor : `${status === 'warn' ? confirm + choices : ''}
           <details class="fix"><summary>${status === 'warn' ? 'Corriger à la main' : 'Modifier'}</summary>${editor}</details>`}
         </li>`;
     })
@@ -632,7 +645,8 @@ async function onReviewClick(event) {
     stop.doubtful = false; // l'adresse trouvée est la bonne : rien à réécrire
   } else {
     const picked = action === 'pick' && stop.alternatives[Number(button.dataset.alt)];
-    const query = picked ? pickedQuery(stop, picked) : item.querySelector('input').value.trim();
+    const city = action === 'city' && stop.suggestions[Number(button.dataset.alt)];
+    const query = city ? city.query : picked ? pickedQuery(stop, picked) : item.querySelector('input').value.trim();
     busy('Recherche…');
     try {
       const found = await geocode(query, startPlace());
@@ -1317,15 +1331,32 @@ async function addStop(event) {
   const raw = $('#add-address').value.trim();
   if (!raw) return toast('Indique l’adresse de la nouvelle intervention.');
   const line = parseList(raw)[0];
-  const query = line?.query ?? raw;
-  busy('Recherche de l’adresse…');
-  let found;
-  try {
-    found = await geocode(query, startPlace());
-  } catch (err) {
-    return toast(err.message);
-  } finally {
-    idle();
+  let query = line?.query ?? raw;
+  let title = line?.title ?? raw;
+  const lookup = async (text) => {
+    busy('Recherche de l’adresse…');
+    try {
+      return await geocode(text, startPlace());
+    } catch (err) {
+      toast(err.message);
+      return undefined;
+    } finally {
+      idle();
+    }
+  };
+  let found = await lookup(query);
+  if (found === undefined) return;
+  // Faute dans le nom de la ville (un « s » oublié…) : on propose la commune
+  // au nom le plus proche. Rien n'est changé sans un « oui ».
+  const guess = found?.unknownCity && found.suggestions?.[0];
+  if (guess) {
+    const yes = await ask(`Ville non reconnue.\n\nTu voulais dire « ${guess.city} » (${guess.postcode}) ?`, { yes: 'Oui', no: 'Non' });
+    if (!yes) return toast('Corrige le nom de la ville dans l’adresse.');
+    query = guess.query;
+    title = guess.query;
+    $('#add-address').value = guess.query;
+    found = await lookup(query);
+    if (found === undefined) return;
   }
   if (!found) return toast('Adresse introuvable. Vérifie la rue et la ville.');
   if (found.unknownCity) return toast('Ville non reconnue. Écris l’adresse avec sa ville, par exemple « 12 rue Jean Jaurès Denain ».');
@@ -1334,7 +1365,6 @@ async function addStop(event) {
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
   const slot = $('#add-slot').value || null;
   const priority = $('#add-priority').checked || Boolean(line?.priority);
-  const title = line?.title ?? raw;
   const stop = { id, raw, query, title, slot, priority, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
   const minutes = Number($('#add-minutes').value);
   if (minutes && minutes !== state.settings.onsiteMinutes) stop.minutes = minutes;

@@ -67,6 +67,20 @@ export function askedStreet(query, city) {
   return asked.slice(0, end);
 }
 
+// Nombre de lettres à changer, ajouter ou enlever pour passer d'un texte à
+// l'autre (« salaumine » → « sallaumines » : 2). Sert à repérer une faute de frappe.
+export function distance(a, b) {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    row = next;
+  }
+  return row[b.length];
+}
+
 // Type de voie, abréviations comprises : « rue », « avenue », « place »…
 const STREET_TYPES = {
   rue: 'rue', avenue: 'avenue', av: 'avenue', boulevard: 'boulevard', bd: 'boulevard', place: 'place', pl: 'place',
