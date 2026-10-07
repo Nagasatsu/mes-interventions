@@ -42,7 +42,7 @@ interventions de la journée, pour faire le moins de route possible.
    l'après-midi (recalcul immédiat sur l'écran du parcours).
 7. L'écran Statistiques montre le temps de route gagné par semaine et par
    mois (un parcours calculé compte pour sa journée).
-8. Le pense-bête « Mes heures » (horloge en haut) : chaque soir on note ses
+8. Le pense-bête « Pointage » (bouton en haut) : chaque soir on note ses
    heures du matin et de l'après-midi (début et fin de chacun), semaine par
    semaine, avec une note si besoin. L'appli fait le total.
 

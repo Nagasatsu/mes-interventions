@@ -89,7 +89,8 @@ function saveState() {
 // la flèche en haut à gauche, ramène à l'écran d'avant au lieu de quitter
 // l'appli. La feuille scannée et le formulaire d'ajout se referment de même.
 
-const TITLES = { settings: 'Réglages', stats: 'Statistiques', memo: 'Mes heures', input: 'Liste du jour', review: 'Adresses à vérifier' };
+// (titres courts : le bandeau porte aussi le bouton « Pointage » et trois icônes)
+const TITLES = { settings: 'Réglages', stats: 'Statistiques', memo: 'Pointage', input: 'Liste du jour', review: 'À vérifier' };
 let currentView = null;
 let depth = 0; // nombre d'écrans ou de volets ouverts au-dessus de l'écran principal
 
@@ -1097,7 +1098,7 @@ function renderProgress() {
   $('#tour-progress').innerHTML = `
     <p class="eta">Retour à la maison vers <b>${fmtClock(end)}</b>${started ? '' : ' <span>en partant maintenant</span>'}</p>
     <p class="hint">${details}${lunch ? (lunch.atAgency ? ' · pause à l’agence comprise' : ' · pause déjeuner comprise') : ''}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>
-    ${interventionsLeft ? '' : '<button class="btn" data-memo type="button">Noter mes heures du jour</button>'}`;
+    ${interventionsLeft ? '' : '<button class="btn" data-memo type="button">Noter mon pointage du jour</button>'}`;
 
   // heure d'arrivée estimée à chaque intervention qui reste, à côté de son trajet
   for (const span of document.querySelectorAll('#tour-list [data-arrival]')) {
@@ -1971,7 +1972,7 @@ function init() {
     if (!$('#ask').open) answer(false); // refermée par le bouton Retour du téléphone
   });
   $('#memo-clear').addEventListener('click', async () => {
-    const sure = await ask('Effacer toutes les heures notées pour cette semaine ? Elles ne pourront pas être récupérées.', { yes: 'Effacer', danger: true });
+    const sure = await ask('Effacer tous les pointages de cette semaine ? Ils ne pourront pas être récupérés.', { yes: 'Effacer', danger: true });
     if (!sure) return;
     for (const day of periodDays('week', memoView.offset).days) delete state.hours[day.key];
     saveState();

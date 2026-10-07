@@ -81,7 +81,7 @@ body {
 .topbar h1 {
   overflow: hidden;
   margin: 0;
-  font-size: 19px;
+  font-size: clamp(16px, 4.6vw, 19px); /* le titre rétrécit un peu sur les petits écrans */
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -96,12 +96,28 @@ body {
 .topbar-actions {
   display: flex;
   flex: none;
+  align-items: center;
   margin-right: -8px;
+}
+
+/* bouton écrit dans le bandeau (« Pointage ») */
+.topbar-text {
+  margin: 0;
+  padding: 5px 9px;
+  border: 1.5px solid currentColor;
+  border-radius: 99px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 /* quatre boutons dans le bandeau : un peu plus serrés pour laisser le titre */
 .topbar-actions .icon-btn {
-  width: 40px;
+  width: 38px;
 }
 
 .icon-btn {
