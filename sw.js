@@ -11,7 +11,7 @@
 // Numéro de version : à augmenter à CHAQUE mise en ligne. C'est ce changement
 // qui prévient les téléphones où l'appli est restée ouverte qu'il y a du
 // nouveau (ils rechargent alors tout seuls). Il s'affiche dans les Réglages.
-const CACHE = 'mes-interventions-v15';
+const CACHE = 'mes-interventions-v16';
 const LIBRARIES = 'https://cdnjs.cloudflare.com/ajax/libs/'; // carte (Leaflet) et glisser-déposer (Sortable)
 const LEAFLET = `${LIBRARIES}leaflet/1.9.4/`;
 const APP_FILES = [

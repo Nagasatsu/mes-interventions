@@ -1569,6 +1569,8 @@ function renderMemoTotals() {
       counted++;
     }
   }
+  // « Effacer » n'apparaît que s'il y a quelque chose de noté dans la semaine affichée
+  $('#memo-clear').hidden = ![...document.querySelectorAll('#memo-days [data-day]')].some((item) => state.hours[item.dataset.day]);
   $('#memo-total').hidden = !counted;
   $('#memo-total').innerHTML = `Total de la semaine : <b>${fmtMinutes(total)}</b>`;
 }
@@ -1890,6 +1892,12 @@ function init() {
   $('#memo-days').addEventListener('change', onMemoInput);
   $('#memo-days').addEventListener('click', onMemoClick);
   $('#memo-share').addEventListener('click', shareMemo);
+  $('#memo-clear').addEventListener('click', () => {
+    if (!confirm('Effacer toutes les heures notées pour cette semaine ? Elles ne pourront pas être récupérées.')) return;
+    for (const day of periodDays('week', memoView.offset).days) delete state.hours[day.key];
+    saveState();
+    renderMemo();
+  });
   $('#reset-stats').addEventListener('click', () => {
     if (!confirm('Effacer toutes les statistiques ? Elles ne pourront pas être récupérées.')) return;
     state.history = [];
