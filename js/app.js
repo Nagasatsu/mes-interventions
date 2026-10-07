@@ -934,7 +934,7 @@ function renderTour() {
         : '<button class="btn" data-action="todo" type="button">Annuler</button>';
     return `
     <li class="stop ${status}${isNext ? ' next' : ''}" data-id="${stop.id}">
-      ${legLine(stop.leg)}
+      ${legLine(stop.leg, status === 'todo' ? stop.id : null)}
       <div class="stop-card">
         <div class="stop-head">
           <span class="num">${k}</span>
@@ -1040,7 +1040,8 @@ function planDay(tour, todo) {
   const lunchDuration = lunchMinutes * minute;
   // pause à l'agence : c'est une étape du parcours, prise en arrivant à l'agence
   const agency = tour.stops.find(isLunch);
-  let lunch = null; // { beforeId, from, to, atAgency }
+  const arrivals = new Map(); // heure d'arrivée estimée à chaque étape qui reste
+  let lunch = null; // { beforeId, from, to, atAgency, arrival }
   let lunchDone = lunchMinutes <= 0 || now >= lunchFrom + lunchDuration || (agency && statusOf(agency) !== 'todo');
   let time = now;
   if (!lunchDone && !agency && now >= lunchFrom) {
@@ -1051,9 +1052,11 @@ function planDay(tour, todo) {
   }
   for (const stop of todo) {
     if (isLunch(stop)) {
-      const from = Math.max(time + stop.leg.duration * 1000, lunchFrom);
+      // arrivé avant l'heure de la pause, on attend qu'elle commence ; arrivé après, elle part de l'arrivée
+      const arrival = time + stop.leg.duration * 1000;
+      const from = Math.max(arrival, lunchFrom);
       time = from + lunchDuration;
-      lunch = { beforeId: stop.id, from, to: time, atAgency: true };
+      lunch = { beforeId: stop.id, from, to: time, atAgency: true, arrival };
       lunchDone = true;
       continue;
     }
@@ -1064,11 +1067,18 @@ function planDay(tour, todo) {
       lunch = { beforeId: stop.id, from, to: time };
       lunchDone = true;
     }
-    time += stop.leg.duration * 1000 + onsiteOf(stop);
+    time += stop.leg.duration * 1000;
+    arrivals.set(stop.id, time);
+    time += onsiteOf(stop);
   }
   time += tour.back.duration * 1000;
-  const step = 5 * minute; // c'est une estimation : arrondi à 5 minutes
-  return { end: new Date(Math.round(time / step) * step), lunch };
+  return { end: aroundTime(time), lunch, arrivals };
+}
+
+// Une heure estimée, arrondie à 5 minutes.
+function aroundTime(time) {
+  const step = 5 * 60 * 1000;
+  return new Date(Math.round(time / step) * step);
 }
 
 const fmtClock = (date) => `${date.getHours()} h ${String(date.getMinutes()).padStart(2, '0')}`;
@@ -1080,7 +1090,7 @@ function renderProgress() {
   const absent = tour.stops.filter((stop) => statusOf(stop) === 'absent').length;
   const started = todo.length < tour.stops.length || tour.recalculatedAt;
   const driving = todo.reduce((total, stop) => total + stop.leg.duration, 0) + tour.back.duration;
-  const { end, lunch } = planDay(tour, todo);
+  const { end, lunch, arrivals } = planDay(tour, todo);
   const details = interventionsLeft
     ? `Reste ${plural(interventionsLeft, 'intervention')} · ${fmtDuration(driving)} de route`
     : 'Toutes les interventions sont terminées';
@@ -1089,15 +1099,27 @@ function renderProgress() {
     <p class="hint">${details}${lunch ? (lunch.atAgency ? ' · pause à l’agence comprise' : ' · pause déjeuner comprise') : ''}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>
     ${interventionsLeft ? '' : '<button class="btn" data-memo type="button">Noter mes heures du jour</button>'}`;
 
-  // horaires de la pause : sur l'étape « agence », ou repère dans la liste
+  // heure d'arrivée estimée à chaque intervention qui reste, à côté de son trajet
+  for (const span of document.querySelectorAll('#tour-list [data-arrival]')) {
+    const arrival = arrivals.get(Number(span.dataset.arrival));
+    span.textContent = arrival ? ` · arrivée vers ${fmtClock(aroundTime(arrival))}` : '';
+  }
+  // pause à l'agence : heure d'arrivée estimée, puis la pause (qui n'est pas prise avant l'heure réglée)
   const lunchTime = document.querySelector('#tour-list .lunch-time');
-  if (lunchTime) lunchTime.textContent = lunch?.atAgency ? `${fmtClock(new Date(lunch.from))} – ${fmtClock(new Date(lunch.to))}` : '';
+  if (lunchTime) {
+    const clock = (time) => fmtClock(aroundTime(time));
+    lunchTime.textContent = !lunch?.atAgency
+      ? ''
+      : lunch.arrival < lunch.from
+        ? `Arrivée vers ${clock(lunch.arrival)} · pause ${clock(lunch.from)} – ${clock(lunch.to)}`
+        : `Arrivée vers ${clock(lunch.arrival)} · pause jusqu’à ${clock(lunch.to)}`;
+  }
   document.querySelector('#tour-list .lunch-break')?.remove();
   const before = lunch && !lunch.atAgency && document.querySelector(`#tour-list .stop[data-id="${lunch.beforeId}"]`);
   if (before) {
     before.insertAdjacentHTML(
       'beforebegin',
-      `<li class="lunch-break">Pause déjeuner · ${fmtClock(new Date(lunch.from))} – ${fmtClock(new Date(lunch.to))}</li>`,
+      `<li class="lunch-break">Pause déjeuner · ${fmtClock(aroundTime(lunch.from))} – ${fmtClock(aroundTime(lunch.to))}</li>`,
     );
   }
 }
@@ -1449,8 +1471,9 @@ const wazeUrl = (p) => `https://waze.com/ul?ll=${p.lat},${p.lon}&navigate=yes`;
 const mapsUrl = (p) => `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}&travelmode=driving`;
 
 const LEG_ORIGIN = { position: ' depuis ta position', last: ' depuis la dernière intervention faite' };
-const legLine = (leg) =>
-  `<div class="leg">${fmtDuration(leg.duration)} · ${fmtDistance(leg.distance)}${LEG_ORIGIN[leg.from] ?? ''}</div>`;
+// `arrivalOf` : numéro de l'intervention dont l'heure d'arrivée estimée s'affiche à la suite (voir renderProgress).
+const legLine = (leg, arrivalOf = null) =>
+  `<div class="leg">${fmtDuration(leg.duration)} · ${fmtDistance(leg.distance)}${LEG_ORIGIN[leg.from] ?? ''}${arrivalOf === null ? '' : `<span data-arrival="${arrivalOf}"></span>`}</div>`;
 
 function fmtDuration(seconds) {
   const minutes = Math.round(seconds / 60);
