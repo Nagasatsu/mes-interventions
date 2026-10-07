@@ -1330,7 +1330,7 @@ async function addStop(event) {
   if (!found) return toast('Adresse introuvable. Vérifie la rue et la ville.');
   if (found.unknownCity) return toast('Ville non reconnue. Écris l’adresse avec sa ville, par exemple « 12 rue Jean Jaurès Denain ».');
   const doubt = doubtReason(query, found) || correctionNote(line ?? {}, found);
-  if (doubt && !confirm(`Adresse trouvée : « ${found.label} » (${doubt}).\n\nC'est bien ça ?`)) return;
+  if (doubt && !(await ask(`Adresse trouvée : « ${found.label} » (${doubt}).\n\nC'est bien ça ?`, { yes: 'Oui, ajouter', no: 'Non' }))) return;
   const id = Math.max(0, ...state.tour.stops.map((stop) => stop.id)) + 1;
   const slot = $('#add-slot').value || null;
   const priority = $('#add-priority').checked || Boolean(line?.priority);
@@ -1437,6 +1437,31 @@ function busy(text) {
 function idle() {
   $('#busy').hidden = true;
   applyUpdate();
+}
+
+// Question à laquelle on répond par oui ou non, affichée par l'appli. (La
+// boîte « confirm » du navigateur met l'adresse du site en titre.) Le bouton
+// Retour du téléphone, ou un appui à côté, vaut « non ».
+let pendingAnswer = null; // fonction qui attend la réponse à la question affichée
+
+function ask(message, { yes = 'Oui', no = 'Annuler', danger = false } = {}) {
+  answer(false); // une question restée sans réponse vaut « non »
+  $('#ask-text').textContent = message;
+  $('#ask-no').textContent = no;
+  $('#ask-yes').textContent = yes;
+  $('#ask-yes').className = `btn ${danger ? 'danger' : 'primary'}`;
+  $('#ask').showModal();
+  return new Promise((resolve) => {
+    pendingAnswer = resolve;
+  });
+}
+
+// Donne la réponse et referme la question.
+function answer(value) {
+  const resolve = pendingAnswer;
+  pendingAnswer = null;
+  if ($('#ask').open) $('#ask').close();
+  resolve?.(value);
 }
 
 let toastTimer;
@@ -1864,14 +1889,24 @@ function init() {
   $('#memo-days').addEventListener('input', onMemoInput);
   $('#memo-days').addEventListener('change', onMemoInput);
   $('#memo-days').addEventListener('click', onMemoClick);
-  $('#memo-clear').addEventListener('click', () => {
-    if (!confirm('Effacer toutes les heures notées pour cette semaine ? Elles ne pourront pas être récupérées.')) return;
+  $('#ask-yes').addEventListener('click', () => answer(true));
+  $('#ask-no').addEventListener('click', () => answer(false));
+  $('#ask').addEventListener('click', (event) => {
+    if (event.target === $('#ask')) answer(false); // appui à côté de la boîte
+  });
+  $('#ask').addEventListener('close', () => {
+    if (!$('#ask').open) answer(false); // refermée par le bouton Retour du téléphone
+  });
+  $('#memo-clear').addEventListener('click', async () => {
+    const sure = await ask('Effacer toutes les heures notées pour cette semaine ? Elles ne pourront pas être récupérées.', { yes: 'Effacer', danger: true });
+    if (!sure) return;
     for (const day of periodDays('week', memoView.offset).days) delete state.hours[day.key];
     saveState();
     renderMemo();
   });
-  $('#reset-stats').addEventListener('click', () => {
-    if (!confirm('Effacer toutes les statistiques ? Elles ne pourront pas être récupérées.')) return;
+  $('#reset-stats').addEventListener('click', async () => {
+    const sure = await ask('Effacer toutes les statistiques ? Elles ne pourront pas être récupérées.', { yes: 'Effacer', danger: true });
+    if (!sure) return;
     state.history = [];
     saveState();
     renderStats();

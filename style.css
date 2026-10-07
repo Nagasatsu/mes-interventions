@@ -825,6 +825,41 @@ select.minutes-select.set {
   color: #2563eb;
 }
 
+/* ---------- Question posée par l'appli (oui / non) ---------- */
+
+.ask {
+  width: min(92vw, 420px);
+  padding: 0; /* le remplissage est dans .ask-box : un appui sur la boîte ne la ferme pas */
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.ask::backdrop {
+  background: rgb(0 0 0 / 0.55);
+}
+
+.ask-box {
+  padding: 18px;
+}
+
+.ask p {
+  margin: 0 0 16px;
+  white-space: pre-line;
+}
+
+.ask .btn {
+  margin: 0;
+}
+
+/* réponse qui efface quelque chose : bouton rouge plein */
+.ask .btn.danger {
+  border-color: var(--bad);
+  background: var(--bad);
+  color: var(--surface);
+}
+
 /* ---------- Chargement et messages ---------- */
 
 .busy {

@@ -219,6 +219,17 @@
   </div>
   <div id="toast" class="toast" role="status" hidden></div>
 
+  <!-- Question posée par l'appli (oui / non), à la place de la boîte du navigateur -->
+  <dialog id="ask" class="ask">
+    <div class="ask-box">
+      <p id="ask-text"></p>
+      <div class="row">
+        <button id="ask-no" class="btn" type="button">Annuler</button>
+        <button id="ask-yes" class="btn primary" type="button">Oui</button>
+      </div>
+    </div>
+  </dialog>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js" crossorigin="anonymous"></script>
   <script type="module" src="js/app.js"></script>
