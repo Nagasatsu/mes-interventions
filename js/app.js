@@ -1596,33 +1596,6 @@ function onMemoClick(event) {
   renderMemo();
 }
 
-// La semaine en texte, à envoyer par message (ou copiée si le partage n'existe pas).
-async function shareMemo() {
-  const { days, label } = periodDays('week', memoView.offset);
-  const lines = days
-    .filter((day) => state.hours[day.key])
-    .map((day) => {
-      const entry = state.hours[day.key];
-      const worked = workedMinutes(entry);
-      const ranges = HALF_DAYS.filter((half) => entry[half.from] || entry[half.to])
-        .map((half) => `${entry[half.from] ? clockText(entry[half.from]) : '?'} – ${entry[half.to] ? clockText(entry[half.to]) : '?'}`)
-        .join(' / ');
-      return `${day.long} : ${[ranges, worked === null ? '' : `(${fmtMinutes(worked)})`, entry.note ?? ''].filter(Boolean).join(' ')}`;
-    });
-  if (!lines.length) return toast('Rien de noté pour cette semaine.');
-  const total = days.reduce((sum, day) => sum + (workedMinutes(state.hours[day.key]) ?? 0), 0);
-  const text = [`Mes heures (${label.split(' · ').pop()})`, ...lines, total ? `Total : ${fmtMinutes(total)}` : ''].filter(Boolean).join('\n');
-  try {
-    if (navigator.share) await navigator.share({ text });
-    else {
-      await navigator.clipboard.writeText(text);
-      toast('Copié : tu peux le coller dans un message.');
-    }
-  } catch (err) {
-    if (err.name !== 'AbortError') toast('Envoi impossible depuis ce téléphone.');
-  }
-}
-
 // ---------- Statistiques ----------
 
 const statsView = { period: 'week', offset: 0 }; // offset 0 = période en cours, -1 = précédente…
@@ -1891,7 +1864,6 @@ function init() {
   $('#memo-days').addEventListener('input', onMemoInput);
   $('#memo-days').addEventListener('change', onMemoInput);
   $('#memo-days').addEventListener('click', onMemoClick);
-  $('#memo-share').addEventListener('click', shareMemo);
   $('#memo-clear').addEventListener('click', () => {
     if (!confirm('Effacer toutes les heures notées pour cette semaine ? Elles ne pourront pas être récupérées.')) return;
     for (const day of periodDays('week', memoView.offset).days) delete state.hours[day.key];
