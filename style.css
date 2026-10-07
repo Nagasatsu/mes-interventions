@@ -81,7 +81,7 @@ body {
 .topbar h1 {
   overflow: hidden;
   margin: 0;
-  font-size: 20px;
+  font-size: 19px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -95,7 +95,13 @@ body {
 
 .topbar-actions {
   display: flex;
+  flex: none;
   margin-right: -8px;
+}
+
+/* quatre boutons dans le bandeau : un peu plus serrés pour laisser le titre */
+.topbar-actions .icon-btn {
+  width: 40px;
 }
 
 .icon-btn {
@@ -893,6 +899,67 @@ select.minutes-select.set {
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+}
+
+/* ---------- Pense-bête : heures de la semaine ---------- */
+
+.memo-day.today {
+  border-left-color: var(--primary);
+}
+
+.memo-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.memo-head b {
+  display: inline-block; /* pour que la majuscule ci-dessous s'applique */
+}
+
+.memo-head b::first-letter {
+  text-transform: uppercase;
+}
+
+/* journée finie : rappel dans le résumé du parcours */
+.progress-card .btn {
+  margin: 10px 0 0;
+}
+
+.memo-worked {
+  flex: none;
+  color: var(--success);
+  font-weight: 700;
+}
+
+.memo-day input[type="text"] {
+  margin: 10px 0 0;
+}
+
+.memo-day .btn.link {
+  justify-content: flex-start;
+  min-height: 40px;
+  padding: 4px 0;
+  font-size: 14px;
+  text-align: left;
+}
+
+.memo-total {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--ok-bg);
+}
+
+.memo-total b {
+  color: var(--success);
+  font-size: 20px;
+}
+
+.memo-total span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .period-nav {

@@ -67,6 +67,7 @@ function loadState() {
     pending: null, // interventions en cours de vérification (pas reprises après fermeture)
     tour: saved.tour || null, // parcours calculé
     history: saved.history || [], // un résumé par parcours, pour les statistiques
+    hours: saved.hours || {}, // pense-bête : heures de début et de fin, par jour
   };
 }
 
@@ -86,7 +87,7 @@ function saveState() {
 // la flèche en haut à gauche, ramène à l'écran d'avant au lieu de quitter
 // l'appli. La feuille scannée et le formulaire d'ajout se referment de même.
 
-const TITLES = { settings: 'Réglages', stats: 'Statistiques', input: 'Liste du jour', review: 'Adresses à vérifier' };
+const TITLES = { settings: 'Réglages', stats: 'Statistiques', memo: 'Mes heures', input: 'Liste du jour', review: 'Adresses à vérifier' };
 let currentView = null;
 let depth = 0; // nombre d'écrans ou de volets ouverts au-dessus de l'écran principal
 
@@ -96,7 +97,7 @@ function render(view) {
     section.hidden = section.id !== `view-${view}`;
   }
   window.scrollTo(0, 0);
-  ({ settings: renderSettings, input: renderInput, review: renderReview, tour: renderTour, stats: renderStats })[view]();
+  ({ settings: renderSettings, input: renderInput, review: renderReview, tour: renderTour, stats: renderStats, memo: renderMemo })[view]();
   renderTopbar();
   applyUpdate();
 }
@@ -1066,7 +1067,8 @@ function renderProgress() {
     : 'Toutes les interventions sont terminées';
   $('#tour-progress').innerHTML = `
     <p class="eta">Retour à la maison vers <b>${fmtClock(end)}</b>${started ? '' : ' <span>en partant maintenant</span>'}</p>
-    <p class="hint">${details}${lunch ? (lunch.atAgency ? ' · pause à l’agence comprise' : ' · pause déjeuner comprise') : ''}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>`;
+    <p class="hint">${details}${lunch ? (lunch.atAgency ? ' · pause à l’agence comprise' : ' · pause déjeuner comprise') : ''}${absent ? ` · ${plural(absent, 'client absent', 'clients absents')}` : ''}</p>
+    ${interventionsLeft ? '' : '<button class="btn" data-memo type="button">Noter mes heures du jour</button>'}`;
 
   // horaires de la pause : sur l'étape « agence », ou repère dans la liste
   const lunchTime = document.querySelector('#tour-list .lunch-time');
@@ -1446,6 +1448,135 @@ function toast(message) {
   }, 4500);
 }
 
+// ---------- Pense-bête : les heures de la semaine ----------
+//
+// Chaque soir, en rentrant, on note l'heure de début et l'heure de fin de sa
+// journée (et un mot si besoin). Tout reste sur le téléphone.
+
+const memoView = { offset: 0 }; // 0 = cette semaine, -1 = la précédente…
+
+const toMinutes = (clock) => {
+  const [hours, minutes] = clock.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+const clockText = (clock) => clock.replace(/^0?(\d+):(\d+)$/, '$1 h $2'); // « 08:05 » → « 8 h 05 »
+
+// Minutes travaillées dans la journée : de l'heure de début à l'heure de fin,
+// moins la pause déjeuner des réglages (pour sa partie comprise dans la journée).
+function workedMinutes(entry) {
+  if (!entry?.start || !entry?.end) return null;
+  const start = toMinutes(entry.start);
+  const end = toMinutes(entry.end);
+  if (end <= start) return null;
+  const lunchFrom = toMinutes(state.settings.lunchStart);
+  const lunchTo = lunchFrom + state.settings.lunchMinutes;
+  return end - start - Math.max(0, Math.min(end, lunchTo) - Math.max(start, lunchFrom));
+}
+
+// Heure à laquelle la dernière intervention du jour a été terminée (« 16:42 »),
+// pour proposer l'heure de fin. null si rien n'a été fait aujourd'hui.
+function lastDoneClock() {
+  const tour = state.tour;
+  if (!tour || tour.day !== dayKey(new Date())) return null;
+  const last = Math.max(0, ...tour.stops.filter((stop) => !isLunch(stop) && stop.changedAt).map((stop) => stop.changedAt));
+  if (!last) return null;
+  const date = new Date(last);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function renderMemo() {
+  const { days, label } = periodDays('week', memoView.offset);
+  const today = dayKey(new Date());
+  const suggestion = lastDoneClock();
+  $('#memo-label').textContent = label;
+  $('#memo-next').disabled = memoView.offset >= 0;
+  $('#memo-days').innerHTML = days
+    .map((day) => {
+      const entry = state.hours[day.key] ?? {};
+      const isToday = day.key === today;
+      const fill =
+        isToday && !entry.end && suggestion
+          ? `<button class="btn link" data-fill="${suggestion}" type="button">Mettre ${clockText(suggestion)}, heure de la dernière intervention</button>`
+          : '';
+      return `
+        <li class="card memo-day${isToday ? ' today' : ''}" data-day="${day.key}">
+          <p class="memo-head"><b>${esc(day.long)}${isToday ? ' · aujourd’hui' : ''}</b><span class="memo-worked"></span></p>
+          <div class="two-cols">
+            <label class="small-label">Début<input type="time" data-field="start" value="${esc(entry.start ?? '')}"></label>
+            <label class="small-label">Fin<input type="time" data-field="end" value="${esc(entry.end ?? '')}"></label>
+          </div>
+          ${fill}
+          <input type="text" data-field="note" value="${esc(entry.note ?? '')}" placeholder="Note" aria-label="Note" maxlength="120">
+        </li>`;
+    })
+    .join('');
+  renderMemoTotals();
+  if (memoView.offset === 0) $('#memo-days .today')?.scrollIntoView({ block: 'center' });
+}
+
+// Total de chaque journée et de la semaine (sans toucher aux champs en cours de saisie).
+function renderMemoTotals() {
+  let total = 0;
+  let counted = 0;
+  for (const item of document.querySelectorAll('#memo-days [data-day]')) {
+    const worked = workedMinutes(state.hours[item.dataset.day]);
+    item.querySelector('.memo-worked').textContent = worked === null ? '' : fmtMinutes(worked);
+    if (worked !== null) {
+      total += worked;
+      counted++;
+    }
+  }
+  const pause = state.settings.lunchMinutes;
+  $('#memo-total').hidden = !counted;
+  $('#memo-total').innerHTML = `Total de la semaine : <b>${fmtMinutes(total)}</b>${pause > 0 ? `<span>pause déjeuner de ${fmtMinutes(pause)} déduite</span>` : ''}`;
+}
+
+function setHours(day, field, value) {
+  const entry = { ...state.hours[day], [field]: value };
+  if (entry.start || entry.end || entry.note) state.hours[day] = entry;
+  else delete state.hours[day];
+  saveState();
+}
+
+function onMemoInput(event) {
+  const input = event.target.closest('input[data-field]');
+  if (!input) return;
+  setHours(input.closest('[data-day]').dataset.day, input.dataset.field, input.value.trim());
+  renderMemoTotals();
+}
+
+function onMemoClick(event) {
+  const button = event.target.closest('button[data-fill]');
+  if (!button) return;
+  setHours(button.closest('[data-day]').dataset.day, 'end', button.dataset.fill);
+  renderMemo();
+}
+
+// La semaine en texte, à envoyer par message (ou copiée si le partage n'existe pas).
+async function shareMemo() {
+  const { days, label } = periodDays('week', memoView.offset);
+  const lines = days
+    .filter((day) => state.hours[day.key])
+    .map((day) => {
+      const entry = state.hours[day.key];
+      const worked = workedMinutes(entry);
+      const clocks = entry.start || entry.end ? `${entry.start ? clockText(entry.start) : '?'} – ${entry.end ? clockText(entry.end) : '?'}` : '';
+      return `${day.long} : ${[clocks, worked === null ? '' : `(${fmtMinutes(worked)})`, entry.note ?? ''].filter(Boolean).join(' ')}`;
+    });
+  if (!lines.length) return toast('Rien de noté pour cette semaine.');
+  const total = days.reduce((sum, day) => sum + (workedMinutes(state.hours[day.key]) ?? 0), 0);
+  const text = [`Mes heures (${label.split(' · ').pop()})`, ...lines, total ? `Total : ${fmtMinutes(total)}` : ''].filter(Boolean).join('\n');
+  try {
+    if (navigator.share) await navigator.share({ text });
+    else {
+      await navigator.clipboard.writeText(text);
+      toast('Copié : tu peux le coller dans un message.');
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') toast('Envoi impossible depuis ce téléphone.');
+  }
+}
+
 // ---------- Statistiques ----------
 
 const statsView = { period: 'week', offset: 0 }; // offset 0 = période en cours, -1 = précédente…
@@ -1685,6 +1816,26 @@ function init() {
     statsView.offset = 0;
     open('stats');
   });
+  const openMemo = () => {
+    memoView.offset = 0;
+    open('memo');
+  };
+  $('#open-memo').addEventListener('click', openMemo);
+  $('#tour-progress').addEventListener('click', (event) => {
+    if (event.target.closest('button[data-memo]')) openMemo();
+  });
+  $('#memo-prev').addEventListener('click', () => {
+    memoView.offset--;
+    renderMemo();
+  });
+  $('#memo-next').addEventListener('click', () => {
+    memoView.offset = Math.min(0, memoView.offset + 1);
+    renderMemo();
+  });
+  $('#memo-days').addEventListener('input', onMemoInput);
+  $('#memo-days').addEventListener('change', onMemoInput);
+  $('#memo-days').addEventListener('click', onMemoClick);
+  $('#memo-share').addEventListener('click', shareMemo);
   $('#reset-stats').addEventListener('click', () => {
     if (!confirm('Effacer toutes les statistiques ? Elles ne pourront pas être récupérées.')) return;
     state.history = [];

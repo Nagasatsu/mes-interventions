@@ -30,6 +30,9 @@
     </div>
     <div class="topbar-actions">
       <button id="toggle-theme" class="icon-btn" type="button"></button>
+      <button id="open-memo" class="icon-btn" type="button" aria-label="Pense-bête : mes heures de la semaine">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      </button>
       <button id="open-stats" class="icon-btn" type="button" aria-label="Statistiques">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 20h18M6 20v-6M12 20V5M18 20v-9"/></svg>
       </button>
@@ -181,6 +184,22 @@
       </div>
       <div id="stats-content"></div>
       <button id="reset-stats" class="btn link danger" type="button">Effacer toutes les statistiques</button>
+    </section>
+
+    <!-- Pense-bête : heures de début et de fin de chaque journée, à noter en rentrant -->
+    <section id="view-memo" class="view" hidden>
+      <div class="period-nav">
+        <button id="memo-prev" class="icon-btn" type="button" aria-label="Semaine précédente">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <p id="memo-label"></p>
+        <button id="memo-next" class="icon-btn" type="button" aria-label="Semaine suivante">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+      <ul id="memo-days" class="cards"></ul>
+      <p id="memo-total" class="memo-total" hidden></p>
+      <button id="memo-share" class="btn" type="button">Envoyer la semaine</button>
     </section>
   </main>
 
