@@ -926,6 +926,16 @@ function renderTour() {
   const interventionItem = (stop, k) => {
     const status = statusOf(stop);
     const isNext = stop.id === nextId;
+    // Adresse : une seule ligne quand la feuille et l'adresse trouvée disent la
+    // même chose ; sinon le texte de la feuille (qui peut porter l'appartement,
+    // ou un numéro que la recherche n'a pas retrouvé) puis l'adresse trouvée.
+    const written = stop.title ?? stop.raw;
+    const sameAddress = sameText(written, stop.label.replace(/(?<!\d)\d{5}(?!\d)/, ''));
+    // Travail à faire, mis en avant ; puis nom, numéro d'ordre et référence, en petit.
+    const info = describe(stop.details ?? '');
+    const meta = [info.name, info.order && `n°${info.order}`, info.ref && `réf. ${info.ref}`, info.call && 'appel locataire']
+      .filter(Boolean)
+      .join(' · ');
     const actions =
       status === 'todo'
         ? `<a class="btn" href="${wazeUrl(stop)}" target="_blank" rel="noopener">Waze</a>
@@ -947,9 +957,10 @@ function renderTour() {
             ${slotControl(stop, status)}
             ${priorityControl(stop, status)}
             ${minutesControl(stop, status)}
-            <p class="title">${esc(stop.title ?? stop.raw)}</p>
-            ${sameText(stop.title ?? stop.raw, stop.label) ? '' : `<p class="sub">${esc(stop.label)}</p>`}
-            ${stop.details ? `<p class="details">${esc(detailsWithoutPhone(stop.details))}</p>` : ''}
+            <p class="title">${esc(sameAddress ? stop.label : written)}</p>
+            ${sameAddress ? '' : `<p class="sub">${esc(stop.label)}</p>`}
+            ${info.work ? `<p class="job">${jobHtml(info.work)}</p>` : ''}
+            ${meta ? `<p class="details">${esc(meta)}</p>` : ''}
             ${stop.phone ? `<a class="phone" href="tel:${stop.phone}">Appeler le ${formatPhone(stop.phone)}</a>` : ''}
           </div>
         </div>
@@ -999,13 +1010,51 @@ function renderTour() {
 // Les parcours enregistrés avant l'ajout de « Absent » n'avaient qu'un champ `done`.
 const statusOf = (stop) => stop.status ?? (stop.done ? 'done' : 'todo');
 
-// Nom, libellé… sans le téléphone (affiché à part, en lien « Appeler »).
-const detailsWithoutPhone = (details) =>
-  details
-    .replace(PHONE, '')
-    .replace(/(\s*·\s*){2,}/g, ' · ')
-    .replace(/^\s*·\s*|\s*·\s*$/g, '')
+// Ce qui accompagne l'adresse sur une ligne lue par le scan :
+// « NOM · téléphone · n°1 26100001 LIBELLÉ ». On sépare le nom, le numéro
+// d'ordre, la référence et le travail à faire (le téléphone est affiché à
+// part, en lien « Appeler »). Une ligne écrite à la main reste telle quelle.
+function describe(details) {
+  const parts = details
+    .split(' · ')
+    .map((part) => part.replace(PHONE, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const at = parts.findIndex((part) => /^n°\s*\d+|(?<!\d)\d{7,8}(?!\d)/.test(part));
+  if (at < 0) return { name: parts.join(' · '), order: null, ref: null, work: '', call: false };
+  const job = parts.slice(at).join(' · ');
+  const order = job.match(/^n°\s*(\d+)/)?.[1] ?? null;
+  const ref = job.match(/(?<!\d)\d{7,8}(?!\d)/)?.[0] ?? null;
+  const text = job.replace(/^n°\s*\d+\s*/, '').replace(ref ?? '', ' ');
+  // « APPEL LOCATAIRE » (parfois coupé) : l'origine de la demande, pas le travail
+  const call = /\bAPPEL\s+LOC[A-Z]*/i.test(text);
+  return { name: parts.slice(0, at).join(' · '), order, ref, work: tidyWork(text.replace(/\bAPPEL\s+LOC[A-Z]*/i, ' ')), call };
+}
+
+// Types d'intervention connus : sur la feuille ils sont collés à la description
+// qui suit (« AIDE SUR INTERVENTIONVMC HYGRO… »), on remet l'espace.
+const JOB_TYPES = ['AIDE SUR INTERVENTION', 'VMC ENTRETIEN'];
+
+function tidyWork(text) {
+  let work = text
+    .replace(/(\p{Lu}{3})(\d)/gu, '$1 $2') // « ENTRETIEN1 caisson » : chiffre collé au mot
+    .replace(/(?:(?:^|\s)\p{L}(?=\s|$)){3,}/gu, ' ') // suite de lettres isolées : parasites de lecture
+    .replace(/\s+/g, ' ')
     .trim();
+  for (const type of JOB_TYPES) {
+    if (work.toUpperCase().startsWith(type) && /[\p{L}\d]/u.test(work[type.length] ?? '')) {
+      work = `${work.slice(0, type.length)} ${work.slice(type.length)}`;
+    }
+  }
+  return work;
+}
+
+// Le travail à faire, avec le type d'intervention en gras quand on le reconnaît :
+// un type connu, ou des mots en majuscules suivis d'une description en minuscules.
+function jobHtml(work) {
+  const known = JOB_TYPES.find((type) => work.toUpperCase().startsWith(`${type} `));
+  const lead = known ? known.length : work.match(/^(?:\p{Lu}[\p{Lu}'’.-]*\s)+(?=[\p{Ll}\d])/u)?.[0].trimEnd().length;
+  return lead ? `<b>${esc(work.slice(0, lead))}</b> ${esc(work.slice(lead).trim())}` : esc(work);
+}
 
 function onTourClick(event) {
   const star = event.target.closest('button[data-priority]');

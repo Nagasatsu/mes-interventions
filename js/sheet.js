@@ -347,12 +347,13 @@ function parseLibelle(lines, refWord) {
   const label = text
     .replace(/[[\]|;!+*_~«»“”]/g, ' ') // traits du tableau et taches lus comme des signes
     .replace(/(^|\s)[^\p{L}\d\s]+(?=\s|$)/gu, ' ') // « mots » sans lettre ni chiffre
+    .replace(/(?:(?:^|\s)\p{L}(?=\s|$)){3,}/gu, ' ') // suite de lettres isolées : parasites de lecture
     .replace(/(\s+\S{1,2})+$/, '') // débris en fin de libellé
     .replace(/^(\s*\S{1,2}\s)+/, '') // et au début (reste du n° mal lu, « Ja »)
     .replace(/^[\s:–-]+/, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return { num, ref, label: label.slice(0, 80) };
+  return { num, ref, label: label.slice(0, 160) };
 }
 
 // Deuxième lecture, ciblée sur la case « Rdv » des lignes où le « M » / « AM »

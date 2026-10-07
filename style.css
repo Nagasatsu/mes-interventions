@@ -618,6 +618,17 @@ textarea:focus {
   font-size: 13px;
 }
 
+/* le travail à faire : mis en avant sous l'adresse */
+.stop-text .job {
+  margin: 8px 0 6px;
+  padding: 7px 10px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  background: var(--primary-soft);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
 .stop-text .phone {
   display: inline-block;
   margin-top: 6px;
