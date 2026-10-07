@@ -631,8 +631,9 @@ textarea:focus {
   color: var(--text);
 }
 
-/* « Matin » / « Après-midi » modifiable directement sur la carte */
-select.slot-select {
+/* « Matin » / « Après-midi » et temps sur place, modifiables directement sur la carte */
+select.slot-select,
+select.minutes-select {
   width: auto;
   padding: 3px 8px;
   border: 1px solid var(--border);
@@ -646,6 +647,18 @@ select.slot-select {
 select.slot-select.unset {
   background: var(--warn-bg);
   color: var(--warn);
+}
+
+select.minutes-select {
+  background: none;
+  color: var(--muted);
+}
+
+/* temps sur place différent de celui des réglages */
+select.minutes-select.set {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 .badge.added {

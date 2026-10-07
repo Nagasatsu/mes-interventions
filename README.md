@@ -30,8 +30,10 @@ interventions de la journée, pour faire le moins de route possible.
    de la position GPS (ou de la dernière intervention faite), et « + Ajouter »
    insère une intervention urgente puis recalcule.
 6. L'heure de retour à la maison est estimée en continu (route qui reste +
-   temps moyen sur place par intervention + pause déjeuner, réglables ; les
-   rendez-vous de l'après-midi commencent après la pause). Interrupteur
+   temps sur place + pause déjeuner, réglables ; les rendez-vous de
+   l'après-midi commencent après la pause). Le temps sur place habituel se
+   règle une fois, et chaque intervention peut avoir le sien (« 15 min sur
+   place », « 1 h sur place »…) directement sur sa carte. Interrupteur
    « Pause déjeuner à l'agence : Non | Oui » sur les écrans liste et parcours :
    avec « Oui », le parcours passe par l'agence entre le matin et
    l'après-midi (recalcul immédiat sur l'écran du parcours).

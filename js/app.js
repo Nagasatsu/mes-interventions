@@ -231,9 +231,43 @@ async function findPlace(query, previous) {
 const POSTCODE = /(^|\D)\d{5}(\D|$)/;
 
 // Ligne écrite par la lecture de photo : « Matin | adresse | nom · tél | libellé ».
-const SLOT_FIELD = /^(matin|m|apr[eè]s[- ]?midi|am|\?)$/i;
+// Le premier champ peut aussi porter le temps sur place de cette intervention,
+// quand il n'est pas celui des réglages : « Matin 45 min | … », « ? 1 h 30 | … ».
+const SLOT_FIELD = /^(matin|m|apr[eè]s[- ]?midi|am|\?)(?:\s+(\d+\s*h\s*\d*|\d+\s*(?:min|mn)))?$/i;
 // Un « ! » au début de la ligne : intervention prioritaire (à faire en premier).
 const PRIORITY_MARK = /^!+\s*/;
+
+// « 45 min », « 1 h », « 1 h 30 » → minutes (null si rien n'est écrit).
+function parseMinutes(text) {
+  if (!text) return null;
+  const hours = text.match(/(\d+)\s*h\s*(\d*)/i);
+  return hours ? Number(hours[1]) * 60 + Number(hours[2] || 0) : Number(text.match(/\d+/)[0]);
+}
+
+const fmtMinutes = (minutes) =>
+  minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${String(minutes % 60).padStart(2, '0')}` : ''}`;
+
+// Une ligne de la liste, découpée : « ! » des prioritaires, matin / après-midi,
+// temps sur place, puis le reste (adresse, nom, libellé). `plain` : ligne
+// écrite sans ces champs (une simple adresse).
+function splitLine(raw) {
+  const priority = PRIORITY_MARK.test(raw);
+  const text = raw.replace(PRIORITY_MARK, '');
+  const fields = text.split(/\s*\|\s*/);
+  const head = fields.length >= 2 ? fields[0].match(SLOT_FIELD) : null;
+  if (!head) return { priority, slot: null, minutes: null, rest: [text], plain: true };
+  const slot = /^(matin|m)$/i.test(head[1]) ? 'M' : /^(apr|am)/i.test(head[1]) ? 'AM' : null;
+  return { priority, slot, minutes: parseMinutes(head[2]), rest: fields.slice(1), plain: false };
+}
+
+// L'inverse : réécrit la ligne (une simple adresse reste une simple adresse
+// tant qu'elle n'a ni matin / après-midi ni temps sur place).
+function joinLine({ priority, slot, minutes, rest, plain }) {
+  const mark = priority ? '! ' : '';
+  if (plain && !slot && !minutes) return mark + rest[0];
+  const head = [SLOT_LABEL[slot] ?? '?', minutes ? fmtMinutes(minutes) : ''].filter(Boolean).join(' ');
+  return mark + [head, ...rest].join(' | ');
+}
 
 // Une intervention par ligne.
 function parseList(text) {
@@ -246,19 +280,12 @@ function parseList(text) {
 
 function parseLine(raw) {
   const firstPhone = (text) => text.match(PHONE)?.[0].replace(/\D/g, '') ?? null;
-  const priority = PRIORITY_MARK.test(raw);
-  const text = raw.replace(PRIORITY_MARK, '');
-  const fields = text.split(/\s*\|\s*/);
-  const structured = fields.length >= 2 && SLOT_FIELD.test(fields[0]);
-  const address = structured ? fields[1] : extractAddress(text);
+  const { priority, slot, minutes, rest, plain } = splitLine(raw);
+  const address = plain ? extractAddress(rest[0]) : rest[0];
   const query = cleanStreet(fixZeros(address));
   const repaired = fixZeros(address) !== address; // correction à montrer (voir correctionNote)
-  if (structured) {
-    const slot = /^(matin|m)$/i.test(fields[0]) ? 'M' : /^(apr|am)/i.test(fields[0]) ? 'AM' : null;
-    const details = fields.slice(2).filter(Boolean).join(' · ');
-    return { raw, query, title: fields[1], details, phone: firstPhone(details), slot, priority, repaired };
-  }
-  return { raw, query, title: text, details: '', phone: firstPhone(text), slot: null, priority, repaired };
+  const details = plain ? '' : rest.slice(1).filter(Boolean).join(' · ');
+  return { raw, query, title: rest[0], details, phone: firstPhone(plain ? rest[0] : details), slot, minutes, priority, repaired };
 }
 
 function extractAddress(line) {
@@ -311,6 +338,8 @@ const notStarted = (tour) => tour.stops.every((stop) => statusOf(stop) === 'todo
 // l'ordre est recalculé tout de suite, et la ligne de la liste est corrigée
 // aussi (pour qu'un nouveau tri garde la correction).
 async function onSlotChange(event) {
+  const timer = event.target.closest('select[data-minutes]');
+  if (timer) return onMinutesChange(timer);
   const select = event.target.closest('select[data-slot]');
   if (!select) return;
   const tour = state.tour;
@@ -332,6 +361,27 @@ async function togglePriority(id) {
   await recalculate([], { fromStart: notStarted(tour), reordered: true });
 }
 
+// Temps sur place propre à une intervention (15 min ici, 1 h là) : l'ordre ne
+// change pas, seule l'heure de retour est recalculée. La ligne de la liste
+// suit, pour qu'un nouveau tri garde le réglage.
+const MINUTE_CHOICES = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180];
+
+// Temps sur place d'une intervention, en millisecondes : le sien, sinon celui des réglages.
+const onsiteOf = (stop) => (stop.minutes ?? state.settings.onsiteMinutes) * 60 * 1000;
+
+function onMinutesChange(select) {
+  const tour = state.tour;
+  const stop = tour.stops.find((s) => s.id === Number(select.closest('[data-id]').dataset.id));
+  const minutes = Number(select.value);
+  if (minutes === state.settings.onsiteMinutes) delete stop.minutes;
+  else stop.minutes = minutes;
+  rewriteLine(stop, joinLine({ ...splitLine(stop.raw), minutes: stop.minutes ?? null }));
+  saveState();
+  renderTour();
+  const todo = tour.stops.filter((s) => statusOf(s) === 'todo');
+  toast(`${fmtMinutes(minutes)} sur place : retour à la maison vers ${fmtClock(planDay(tour, todo).end)}.`);
+}
+
 // Remplace la ligne d'une intervention dans la liste du jour.
 function rewriteLine(stop, raw) {
   state.draft = state.draft
@@ -345,11 +395,7 @@ const SLOT_LABEL = { M: 'Matin', AM: 'Après-midi' };
 
 // Réécrit une ligne de la liste avec « Matin | », « Après-midi | » ou « ? | » devant.
 function withSlot(raw, slot) {
-  const mark = raw.match(PRIORITY_MARK)?.[0] ?? '';
-  const text = raw.slice(mark.length);
-  const fields = text.split(/\s*\|\s*/);
-  const rest = fields.length >= 2 && SLOT_FIELD.test(fields[0]) ? fields.slice(1) : [text];
-  return mark + [SLOT_LABEL[slot] ?? '?', ...rest].join(' | ');
+  return joinLine({ ...splitLine(raw), slot, plain: false });
 }
 
 // Réécrit une ligne de la liste avec ou sans le « ! » des prioritaires.
@@ -506,6 +552,7 @@ function toStop(id, line, found) {
   const usable = Boolean(found) && !found.unknownCity;
   const priority = Boolean(line.priority);
   const stop = { id, raw, query, title, details, phone, slot, priority, found: usable, unknownCity: Boolean(found?.unknownCity) };
+  if (line.minutes) stop.minutes = line.minutes; // temps sur place propre à cette intervention
   if (usable) {
     const doubt = doubtReason(line.query, found);
     const corrected = doubt ? '' : correctionNote(line, found);
@@ -674,14 +721,13 @@ function bestOrder(durations, stops, startTime = Date.now()) {
   const draftRanks = stops.map((stop) => (stop.slot || stop.priority ? rankOf(stop) : null));
   const draft = optimizeOrder(penalize(durations, [0, ...draftRanks, LAST_RANK]), 0, n + 1, real, 150);
   const lunchFrom = lunchWindow().from;
-  const onsite = state.settings.onsiteMinutes * 60 * 1000;
   const arrival = new Map();
   let time = startTime;
   let previous = 0;
   for (const i of draft) {
     time += durations[previous][i] * 1000;
     arrival.set(i, time);
-    time += onsite;
+    time += onsiteOf(stops[i - 1]);
     previous = i;
   }
   const ranks = stops.map((stop, k) => rankOf(stop, arrival.get(k + 1) < lunchFrom));
@@ -711,12 +757,12 @@ function orderAfterLocked(durations, todo, lockedCount) {
   const nodes = [lockedCount, ...free.map((_, i) => lockedCount + 1 + i), n + 1];
   const sub = nodes.map((a) => nodes.map((b) => durations[a][b]));
   // heure à laquelle on repart de la dernière étape placée à la main
-  const onsite = state.settings.onsiteMinutes * 60 * 1000;
   const lunch = lunchWindow();
   let startTime = Date.now();
   for (const i of head) {
+    const stop = todo[i - 1];
     startTime += durations[i - 1][i] * 1000;
-    startTime = isLunch(todo[i - 1]) ? Math.max(startTime, lunch.from) + (lunch.to - lunch.from) : startTime + onsite;
+    startTime = isLunch(stop) ? Math.max(startTime, lunch.from) + (lunch.to - lunch.from) : startTime + onsiteOf(stop);
   }
   const tail = bestOrder(sub, free, startTime);
   return {
@@ -881,6 +927,7 @@ function renderTour() {
             ${stop.added ? '<span class="badge added">Ajoutée</span>' : ''}
             ${slotControl(stop, status)}
             ${priorityControl(stop, status)}
+            ${minutesControl(stop, status)}
             <p class="title">${esc(stop.title ?? stop.raw)}</p>
             ${sameText(stop.title ?? stop.raw, stop.label) ? '' : `<p class="sub">${esc(stop.label)}</p>`}
             ${stop.details ? `<p class="details">${esc(detailsWithoutPhone(stop.details))}</p>` : ''}
@@ -896,6 +943,14 @@ function renderTour() {
     const option = (value, text) => `<option value="${value}"${(stop.slot ?? '') === value ? ' selected' : ''}>${text}</option>`;
     return `<select class="slot-select${stop.slot ? '' : ' unset'}" data-slot aria-label="Matin ou après-midi">
       ${option('', 'Matin ou après-midi ?')}${option('M', 'Matin')}${option('AM', 'Après-midi')}
+    </select>`;
+  };
+  const minutesControl = (stop, status) => {
+    if (status !== 'todo') return '';
+    const current = stop.minutes ?? state.settings.onsiteMinutes;
+    const choices = [...new Set([...MINUTE_CHOICES, current])].sort((a, b) => a - b);
+    return `<select class="minutes-select${stop.minutes === undefined ? '' : ' set'}" data-minutes aria-label="Temps sur place">
+      ${choices.map((m) => `<option value="${m}"${m === current ? ' selected' : ''}>${fmtMinutes(m)} sur place</option>`).join('')}
     </select>`;
   };
   const priorityControl = (stop, status) => {
@@ -958,7 +1013,7 @@ function onTourClick(event) {
 // dès que l'heure est passée, ou avant un rendez-vous « Après-midi » (qui ne
 // commence pas avant la fin de la pause). Une journée finie avant midi n'en a pas.
 function planDay(tour, todo) {
-  const { onsiteMinutes, lunchMinutes } = state.settings;
+  const { lunchMinutes } = state.settings;
   const minute = 60 * 1000;
   const now = Date.now();
   const lunchFrom = lunchWindow(now).from;
@@ -989,7 +1044,7 @@ function planDay(tour, todo) {
       lunch = { beforeId: stop.id, from, to: time };
       lunchDone = true;
     }
-    time += stop.leg.duration * 1000 + onsiteMinutes * minute;
+    time += stop.leg.duration * 1000 + onsiteOf(stop);
   }
   time += tour.back.duration * 1000;
   const step = 5 * minute; // c'est une estimation : arrondi à 5 minutes
@@ -1277,10 +1332,13 @@ async function addStop(event) {
   const priority = $('#add-priority').checked || Boolean(line?.priority);
   const title = line?.title ?? raw;
   const stop = { id, raw, query, title, slot, priority, found: true, label: found.label, lat: found.lat, lon: found.lon, status: 'todo', added: true };
+  const minutes = Number($('#add-minutes').value);
+  if (minutes && minutes !== state.settings.onsiteMinutes) stop.minutes = minutes;
   if (history.state?.overlay === 'add') goBack();
   else $('#add-form').hidden = true;
   $('#add-address').value = '';
   $('#add-slot').value = '';
+  $('#add-minutes').value = '';
   $('#add-priority').checked = false;
   await recalculate([stop]);
 }
@@ -1696,6 +1754,9 @@ function init() {
   }
   $('#recalc').addEventListener('click', () => recalculate());
   $('#show-add').addEventListener('click', () => {
+    $('#add-minutes').innerHTML =
+      `<option value="">Comme d’habitude (${fmtMinutes(state.settings.onsiteMinutes)})</option>` +
+      MINUTE_CHOICES.map((m) => `<option value="${m}">${fmtMinutes(m)}</option>`).join('');
     if ($('#add-form').hidden) openOverlay('add');
     $('#add-address').focus();
   });

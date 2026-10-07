@@ -61,12 +61,12 @@
         </fieldset>
         <p class="hint">Le retour se fait toujours au domicile.</p>
         <label class="field">
-          <span>Temps moyen passé sur place, par intervention</span>
+          <span>Temps passé sur place, d'habitude</span>
           <div class="inline-input">
             <input id="onsite" type="number" min="0" max="240" step="1" inputmode="numeric">
             <span>minutes</span>
           </div>
-          <small class="hint">Sert à estimer l'heure de retour à la maison.</small>
+          <small class="hint">Sert à estimer l'heure de retour. Chaque intervention peut avoir le sien.</small>
         </label>
         <fieldset class="field">
           <legend>Pause déjeuner</legend>
@@ -148,6 +148,10 @@
             <option value="M">Matin</option>
             <option value="AM">Après-midi</option>
           </select>
+        </label>
+        <label class="field">
+          <span>Temps sur place</span>
+          <select id="add-minutes"></select>
         </label>
         <label class="choice"><input id="add-priority" type="checkbox"> Prioritaire (à faire en premier)</label>
         <div class="row">
